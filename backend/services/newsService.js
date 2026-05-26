@@ -1,38 +1,105 @@
 import Parser from "rss-parser";
-import { newsFeeds } from "../config/constants.js";
+import { newsSources } from "../config/constants.js";
 
-const parser = new Parser();
+const parser = new Parser({
+  headers: {
+    "User-Agent": "trading-ai-platform/1.0",
+  },
+  timeout: 12000,
+});
+const MAX_ITEMS_PER_SOURCE = 15;
+const MAX_NEWS_ITEMS = 60;
+
+let latestSourceStatus = buildInitialSourceStatus();
 
 /**
  * Fetch and normalize RSS news items from configured feeds.
  */
 export async function fetchNewsData() {
-  const allItems = [];
+  const bundle = await fetchNewsBundle();
+  return bundle.items;
+}
 
-  for (const url of newsFeeds) {
-    try {
-      const feed = await parser.parseURL(url);
+/**
+ * Fetch news plus source-health metadata for API/system reporting.
+ */
+export async function fetchNewsBundle() {
+  const results = await Promise.all(newsSources.map(fetchOneNewsSource));
+  const allItems = results.flatMap((result) => result.items);
+  const sourceStatus = results.map((result) => result.status);
 
-      const items = (feed.items || []).slice(0, 15).map((item) => ({
-        title: item.title || "",
-        link: item.link || "",
-        pubDate: item.pubDate || item.isoDate || "",
-        contentSnippet: item.contentSnippet || item.content || "",
-        source: feed.title || url,
-      }));
-
-      allItems.push(...items);
-    } catch (err) {
-      console.error(`RSS fetch failed for ${url}:`, err.message);
-    }
-  }
-
-  return dedupeNewsItems(
+  const items = dedupeNewsItems(
     allItems
       .filter((item) => item.title)
       .sort((a, b) => new Date(b.pubDate || 0) - new Date(a.pubDate || 0))
-      .slice(0, 40)
+      .slice(0, MAX_NEWS_ITEMS)
   );
+
+  latestSourceStatus = sourceStatus;
+
+  return {
+    count: items.length,
+    items,
+    sources: sourceStatus,
+    healthySourceCount: sourceStatus.filter((source) => source.status === "OK").length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function getNewsSourceStatus() {
+  return latestSourceStatus;
+}
+
+async function fetchOneNewsSource(source) {
+  if (!source.enabled) {
+    return {
+      items: [],
+      status: buildSourceStatus(source, "DISABLED", 0),
+    };
+  }
+
+  try {
+    const feed = await parser.parseURL(source.url);
+
+    const items = (feed.items || []).slice(0, MAX_ITEMS_PER_SOURCE).map((item) => ({
+      title: item.title || "",
+      link: item.link || "",
+      pubDate: item.pubDate || item.isoDate || "",
+      contentSnippet: item.contentSnippet || item.content || "",
+      source: source.name || feed.title || source.url,
+      sourceId: source.id,
+      sourceCategory: source.category,
+    }));
+
+    return {
+      items,
+      status: buildSourceStatus(source, "OK", items.length),
+    };
+  } catch (err) {
+    const status = buildSourceStatus(source, "ERROR", 0, err.message);
+    console.error(`RSS fetch failed for ${source.name} (${source.url}):`, err.message);
+    return {
+      items: [],
+      status,
+    };
+  }
+}
+
+function buildInitialSourceStatus() {
+  return newsSources.map((source) => buildSourceStatus(source, source.enabled ? "UNKNOWN" : "DISABLED", 0));
+}
+
+function buildSourceStatus(source, status, itemCount, error = null) {
+  return {
+    id: source.id,
+    name: source.name,
+    url: source.url,
+    category: source.category,
+    status,
+    itemCount,
+    error,
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 /**

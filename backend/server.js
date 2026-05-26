@@ -6,9 +6,12 @@ import cors from "cors";
 
 import { PORT } from "./config/constants.js";
 import { fetchMarketData } from "./services/marketService.js";
-import { fetchNewsData } from "./services/newsService.js";
+import { fetchNewsBundle, fetchNewsData } from "./services/newsService.js";
 import { buildBiasEngine } from "./services/biasService.js";
-import { fetchCalendarEvents } from "./services/calendarService.js";
+import {
+  fetchCalendarBundle,
+  fetchCalendarEvents,
+} from "./services/calendarService.js";
 import { buildMacroBriefing } from "./services/briefingService.js";
 import {
   getAllBiasHistory,
@@ -77,7 +80,7 @@ app.get("/api/market", async (req, res) => {
 
 app.get("/api/news", async (req, res) => {
   try {
-    const news = await fetchNewsData();
+    const news = await fetchNewsBundle();
     res.json(news);
   } catch (err) {
     console.error(err.message);
@@ -102,13 +105,8 @@ app.get("/api/news-impact", async (req, res) => {
 
 app.get("/api/calendar", async (req, res) => {
   try {
-    const events = await fetchCalendarEvents();
-
-    res.json({
-      count: events.length,
-      events,
-      generatedAt: new Date().toISOString(),
-    });
+    const calendar = await fetchCalendarBundle();
+    res.json(calendar);
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Failed to fetch calendar data" });

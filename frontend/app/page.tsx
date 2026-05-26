@@ -173,6 +173,7 @@ export default function Home() {
   const [biasShifts, setBiasShifts] = useState<BiasShift[]>([]);
   const [selected, setSelected] = useState("NQ");
   const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
 
   async function fetchDashboard() {
@@ -224,6 +225,8 @@ export default function Home() {
   }, [selected]);
 
   useEffect(() => {
+    setMounted(true);
+
     const timer = setInterval(() => {
       setNow(new Date());
     }, 1000);
@@ -239,7 +242,7 @@ export default function Home() {
   }, [dashboard]);
 
   const selectedAsset = assets.find((a) => a.asset === selected) ?? null;
-  const sessions = getSessionInfos(now);
+  const sessions = mounted ? getSessionInfos(now) : [];
 
   function getBiasColor(value?: string) {
     if (value === "Bullish") return "text-green-400 bg-green-900/30 border-green-700";
@@ -311,7 +314,9 @@ export default function Home() {
           <div className="mb-4 flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Sessions</p>
-              <h2 className="mt-2 text-2xl font-bold">UTC {formatUtcClock(now)}</h2>
+              <h2 className="mt-2 text-2xl font-bold">
+                UTC {mounted ? formatUtcClock(now) : "--:--:--"}
+              </h2>
             </div>
             <div className="text-sm text-gray-400">
               Based on your device time converted to UTC
@@ -319,24 +324,39 @@ export default function Home() {
           </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {sessions.map((session) => (
-              <div
-                key={session.name}
-                className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4"
-              >
-                <div className="flex items-center justify-between">
-                  <p className="text-lg font-semibold">{session.name}</p>
-                  <span
-                    className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getSessionStatusStyle(
-                      session.status
-                    )}`}
+            {mounted
+              ? sessions.map((session) => (
+                  <div
+                    key={session.name}
+                    className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4"
                   >
-                    {session.status === "RUNNING" ? "Running" : "Closed"}
-                  </span>
-                </div>
-                <p className="mt-3 text-sm text-gray-300">{session.message}</p>
-              </div>
-            ))}
+                    <div className="flex items-center justify-between">
+                      <p className="text-lg font-semibold">{session.name}</p>
+                      <span
+                        className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getSessionStatusStyle(
+                          session.status
+                        )}`}
+                      >
+                        {session.status === "RUNNING" ? "Running" : "Closed"}
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm text-gray-300">{session.message}</p>
+                  </div>
+                ))
+              : ["Asia", "London", "New York"].map((session) => (
+                  <div
+                    key={session}
+                    className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-lg font-semibold">{session}</p>
+                      <span className="rounded-lg border border-gray-700 bg-gray-800 px-3 py-1 text-xs font-semibold text-gray-300">
+                        --
+                      </span>
+                    </div>
+                    <p className="mt-3 text-sm text-gray-300">--</p>
+                  </div>
+                ))}
           </div>
         </div>
 

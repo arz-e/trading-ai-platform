@@ -13,11 +13,54 @@ export const symbols = {
 
 export const dashboardAssets = ["ES", "NQ", "YM", "GOLD", "DXY", "USOIL"];
 
-export const newsFeeds = [
-  "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-  "https://feeds.reuters.com/reuters/businessNews",
-  "https://feeds.reuters.com/reuters/marketsNews",
+export const newsSources = [
+  {
+    id: "cnbc-top",
+    name: "CNBC Top News",
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    category: "market_news",
+    enabled: true,
+  },
+  {
+    id: "cnbc-finance",
+    name: "CNBC Finance",
+    url: "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+    category: "market_news",
+    enabled: true,
+  },
+  {
+    id: "cnbc-investing",
+    name: "CNBC Investing",
+    url: "https://www.cnbc.com/id/15839069/device/rss/rss.html",
+    category: "market_news",
+    enabled: true,
+  },
+  {
+    id: "yahoo-finance",
+    name: "Yahoo Finance",
+    url: "https://news.yahoo.com/rss/finance",
+    category: "market_news",
+    enabled: true,
+  },
+  {
+    id: "fed-press",
+    name: "Federal Reserve Press Releases",
+    url: "https://www.federalreserve.gov/feeds/press_all.xml",
+    category: "official_macro",
+    enabled: true,
+  },
+  {
+    id: "bls-latest",
+    name: "BLS Latest Releases",
+    url: "https://www.bls.gov/feed/bls_latest.rss",
+    category: "official_macro",
+    enabled: false,
+  },
 ];
+
+export const newsFeeds = newsSources
+  .filter((source) => source.enabled)
+  .map((source) => source.url);
 
 export const assetRules = {
   ES: {

@@ -1,5 +1,7 @@
 import { dashboardAssets, symbols } from "../config/constants.js";
 import { getSystemStats } from "./dbService.js";
+import { getCalendarSourceStatus } from "./calendarService.js";
+import { getNewsSourceStatus } from "./newsService.js";
 
 /*
   System Service
@@ -31,6 +33,11 @@ export async function buildSystemStatus({ startedAt, latestBiasRun }) {
       connected: true,
       biasHistoryRows: dbStats.biasHistoryRows,
       biasRunRows: dbStats.biasRunRows,
+    },
+
+    dataSources: {
+      news: getNewsSourceStatus(),
+      calendar: getCalendarSourceStatus(),
     },
 
     latestBiasRun: latestBiasRun || null,
