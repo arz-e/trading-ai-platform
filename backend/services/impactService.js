@@ -1,5 +1,6 @@
 import { impactCategoryRules, urgencyKeywords } from "../config/constants.js";
 import { analyzeHeadlineSentiment } from "./sentimentService.js";
+import { containsKeyword } from "../utils/textMatching.js";
 
 const sourceWeightRules = [
   { match: /reuters/i, weight: 1.25 },
@@ -31,12 +32,12 @@ export function scoreHeadlineImpact(item) {
   const sourceWeight = resolveSourceWeight(item.source);
 
   const categoryMatches = impactCategoryRules.filter((rule) =>
-    rule.keywords.some((keyword) => titleText.includes(keyword))
+    rule.keywords.some((keyword) => containsKeyword(titleText, keyword))
   );
 
   const categoryWeight = categoryMatches.reduce((sum, rule) => sum + rule.weight, 0);
 
-  const urgencyScore = urgencyKeywords.some((keyword) => titleText.includes(keyword))
+  const urgencyScore = urgencyKeywords.some((keyword) => containsKeyword(titleText, keyword))
     ? 1.2
     : 0;
 

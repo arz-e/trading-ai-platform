@@ -33,6 +33,7 @@ import { buildNewsImpactFeed } from "./services/impactService.js";
 import {
   buildEvaluationRows,
   buildPerformanceSummary,
+  buildPostMortem,
 } from "./services/performanceService.js";
 import { buildSystemStatus } from "./services/systemService.js";
 
@@ -300,15 +301,22 @@ app.get("/api/bias-shifts", async (req, res) => {
 
 app.get("/api/performance", async (req, res) => {
   try {
-    const limit = Math.max(1, Math.min(1000, Number(req.query.limit || 120)));
-    const rawRows = await getAllBiasHistory(limit);
+    const limit = normalizeLimit(req.query.limit, 120, 1000);
+    const historyLimit = normalizeHistoryLimit(limit);
+    const asset = req.query.asset
+      ? String(req.query.asset).toUpperCase()
+      : null;
+    const rawRows = asset
+      ? await getBiasHistory(asset, historyLimit)
+      : await getAllBiasHistory(historyLimit);
     const evaluated = buildEvaluationRows(rawRows);
     const latestPerAsset = await getLatestRowsPerAsset();
 
     res.json({
+      asset,
       summary: buildPerformanceSummary(evaluated),
       latestByAsset: latestPerAsset,
-      evaluationSample: evaluated.slice(0, 24),
+      evaluationSample: evaluated.slice(0, Math.min(24, limit)),
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -317,6 +325,69 @@ app.get("/api/performance", async (req, res) => {
   }
 });
 
+app.get("/api/evaluations", async (req, res) => {
+  try {
+    const limit = normalizeLimit(req.query.limit, 500, 2000);
+    const historyLimit = normalizeHistoryLimit(limit);
+    const asset = req.query.asset
+      ? String(req.query.asset).toUpperCase()
+      : null;
+    const verdict = req.query.verdict
+      ? String(req.query.verdict).toLowerCase()
+      : null;
+    const rawRows = asset
+      ? await getBiasHistory(asset, historyLimit)
+      : await getAllBiasHistory(historyLimit);
+    const filteredEvaluations = buildEvaluationRows(rawRows).filter((row) =>
+      verdict ? row.evaluation?.verdict === verdict : true
+    );
+    const evaluations = filteredEvaluations.slice(0, limit);
+
+    res.json({
+      count: evaluations.length,
+      asset,
+      verdict,
+      summary: buildPerformanceSummary(filteredEvaluations),
+      evaluations,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch evaluations" });
+  }
+});
+
+app.get("/api/postmortem/:id", async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(5000, Number(req.query.limit || 2000)));
+    const rawRows = await getAllBiasHistory(limit);
+    const evaluations = buildEvaluationRows(rawRows);
+    const postMortem = buildPostMortem(evaluations, req.params.id);
+
+    if (!postMortem) {
+      res.status(404).json({ error: "Post-mortem row not found or not evaluable yet" });
+      return;
+    }
+
+    res.json({
+      postMortem,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch post-mortem" });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
 });
+
+function normalizeLimit(value, fallback, max) {
+  const parsed = Number(value ?? fallback);
+  return Math.max(1, Math.min(max, Number.isFinite(parsed) ? parsed : fallback));
+}
+
+function normalizeHistoryLimit(resultLimit) {
+  return Math.max(200, Math.min(5000, resultLimit * 50));
+}

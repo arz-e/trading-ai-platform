@@ -189,6 +189,7 @@ export function getBiasHistory(asset, limit = 24) {
         news_bias_json AS newsBiasJson,
         technical_bias_json AS technicalBiasJson,
         combined_bias_json AS combinedBiasJson,
+        market_snapshot_json AS marketSnapshotJson,
         headline_count AS headlineCount,
         generated_at AS generatedAt
       FROM bias_history
@@ -212,6 +213,7 @@ export function getBiasHistory(asset, limit = 24) {
           newsBias: safeJsonParse(row.newsBiasJson, null),
           technicalBias: safeJsonParse(row.technicalBiasJson, null),
           combinedBias: safeJsonParse(row.combinedBiasJson, null),
+          marketSnapshot: safeJsonParse(row.marketSnapshotJson, null),
         }))
       );
     });
@@ -236,6 +238,7 @@ export function getAllBiasHistory(limit = 48) {
         news_bias_json AS newsBiasJson,
         technical_bias_json AS technicalBiasJson,
         combined_bias_json AS combinedBiasJson,
+        market_snapshot_json AS marketSnapshotJson,
         headline_count AS headlineCount,
         generated_at AS generatedAt
       FROM bias_history
@@ -258,6 +261,7 @@ export function getAllBiasHistory(limit = 48) {
           newsBias: safeJsonParse(row.newsBiasJson, null),
           technicalBias: safeJsonParse(row.technicalBiasJson, null),
           combinedBias: safeJsonParse(row.combinedBiasJson, null),
+          marketSnapshot: safeJsonParse(row.marketSnapshotJson, null),
         }))
       );
     });
@@ -300,6 +304,7 @@ export function getLatestRowsPerAsset() {
           newsBias: safeJsonParse(row.news_bias_json, null),
           technicalBias: safeJsonParse(row.technical_bias_json, null),
           combinedBias: safeJsonParse(row.combined_bias_json, null),
+          marketSnapshot: safeJsonParse(row.market_snapshot_json, null),
           headlineCount: row.headline_count,
           generatedAt: row.generated_at,
         }))

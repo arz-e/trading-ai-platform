@@ -1,5 +1,6 @@
 import Parser from "rss-parser";
 import { newsSources } from "../config/constants.js";
+import { containsAnyKeyword } from "../utils/textMatching.js";
 
 const parser = new Parser({
   headers: {
@@ -130,7 +131,7 @@ export function filterMacroRelevantNews(items = []) {
   return items.filter((item) => {
     const text = `${item.title} ${item.contentSnippet}`.toLowerCase();
 
-    return [
+    return containsAnyKeyword(text, [
       "fed",
       "fomc",
       "powell",
@@ -156,7 +157,7 @@ export function filterMacroRelevantNews(items = []) {
       "earnings",
       "manufacturing",
       "economy",
-    ].some((keyword) => text.includes(keyword));
+    ]);
   });
 }
 
