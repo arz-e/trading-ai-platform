@@ -24,6 +24,9 @@ export function initDb() {
       reasons_json TEXT,
       drivers_json TEXT,
       sentiment_json TEXT,
+      news_bias_json TEXT,
+      technical_bias_json TEXT,
+      combined_bias_json TEXT,
       market_snapshot_json TEXT,
       headline_count INTEGER,
       generated_at TEXT NOT NULL
@@ -63,6 +66,9 @@ export function initDb() {
 
   db.run(`ALTER TABLE bias_history ADD COLUMN drivers_json TEXT`, () => {});
   db.run(`ALTER TABLE bias_history ADD COLUMN sentiment_json TEXT`, () => {});
+  db.run(`ALTER TABLE bias_history ADD COLUMN news_bias_json TEXT`, () => {});
+  db.run(`ALTER TABLE bias_history ADD COLUMN technical_bias_json TEXT`, () => {});
+  db.run(`ALTER TABLE bias_history ADD COLUMN combined_bias_json TEXT`, () => {});
   db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_level TEXT`, () => {});
   db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_score REAL`, () => {});
   db.run(`ALTER TABLE bias_runs ADD COLUMN next_event_title TEXT`, () => {});
@@ -88,11 +94,14 @@ export function logBiasRun({
       reasons_json,
       drivers_json,
       sentiment_json,
+      news_bias_json,
+      technical_bias_json,
+      combined_bias_json,
       market_snapshot_json,
       headline_count,
       generated_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   const insertRunSql = `
@@ -146,6 +155,9 @@ export function logBiasRun({
         JSON.stringify(row.reasons || []),
         JSON.stringify(row.drivers || []),
         JSON.stringify(row.sentimentSummary || {}),
+        JSON.stringify(row.newsBias || {}),
+        JSON.stringify(row.technicalBias || {}),
+        JSON.stringify(row.combinedBias || {}),
         JSON.stringify(market || {}),
         headlineCount,
         generatedAt,
@@ -174,6 +186,9 @@ export function getBiasHistory(asset, limit = 24) {
         reasons_json AS reasonsJson,
         drivers_json AS driversJson,
         sentiment_json AS sentimentJson,
+        news_bias_json AS newsBiasJson,
+        technical_bias_json AS technicalBiasJson,
+        combined_bias_json AS combinedBiasJson,
         headline_count AS headlineCount,
         generated_at AS generatedAt
       FROM bias_history
@@ -194,6 +209,9 @@ export function getBiasHistory(asset, limit = 24) {
           reasons: safeJsonParse(row.reasonsJson, []),
           drivers: safeJsonParse(row.driversJson, []),
           sentimentSummary: safeJsonParse(row.sentimentJson, {}),
+          newsBias: safeJsonParse(row.newsBiasJson, null),
+          technicalBias: safeJsonParse(row.technicalBiasJson, null),
+          combinedBias: safeJsonParse(row.combinedBiasJson, null),
         }))
       );
     });
@@ -215,6 +233,9 @@ export function getAllBiasHistory(limit = 48) {
         reasons_json AS reasonsJson,
         drivers_json AS driversJson,
         sentiment_json AS sentimentJson,
+        news_bias_json AS newsBiasJson,
+        technical_bias_json AS technicalBiasJson,
+        combined_bias_json AS combinedBiasJson,
         headline_count AS headlineCount,
         generated_at AS generatedAt
       FROM bias_history
@@ -234,6 +255,9 @@ export function getAllBiasHistory(limit = 48) {
           reasons: safeJsonParse(row.reasonsJson, []),
           drivers: safeJsonParse(row.driversJson, []),
           sentimentSummary: safeJsonParse(row.sentimentJson, {}),
+          newsBias: safeJsonParse(row.newsBiasJson, null),
+          technicalBias: safeJsonParse(row.technicalBiasJson, null),
+          combinedBias: safeJsonParse(row.combinedBiasJson, null),
         }))
       );
     });
@@ -273,6 +297,9 @@ export function getLatestRowsPerAsset() {
           reasons: safeJsonParse(row.reasons_json, []),
           drivers: safeJsonParse(row.drivers_json, []),
           sentimentSummary: safeJsonParse(row.sentiment_json, {}),
+          newsBias: safeJsonParse(row.news_bias_json, null),
+          technicalBias: safeJsonParse(row.technical_bias_json, null),
+          combinedBias: safeJsonParse(row.combined_bias_json, null),
           headlineCount: row.headline_count,
           generatedAt: row.generated_at,
         }))

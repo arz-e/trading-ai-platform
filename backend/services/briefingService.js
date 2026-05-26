@@ -46,11 +46,15 @@ export function buildMacroBriefing({ market = {}, bias = {}, newsImpact = null }
   News impact integration
   */
 
-  if (newsImpact?.summary?.dominantCategories?.includes("geopolitics")) {
+  const dominantCategories = (newsImpact?.summary?.dominantCategories ?? []).map(
+    (item) => String(item.category ?? "").toUpperCase()
+  );
+
+  if (dominantCategories.includes("GEOPOLITICS")) {
     briefing.riskFactors.push("Geopolitical tensions dominating headlines");
   }
 
-  if (newsImpact?.summary?.dominantCategories?.includes("inflation")) {
+  if (dominantCategories.includes("INFLATION")) {
     briefing.riskFactors.push("Inflation headlines increasing rate fears");
   }
 

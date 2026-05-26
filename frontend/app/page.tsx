@@ -9,6 +9,14 @@ type Driver = {
   weight: number;
 };
 
+type BiasBreakdown = {
+  bias: string;
+  confidence: number;
+  score: number;
+  hitCount?: number;
+  reasons?: Array<{ text: string; direction: string; weight: number }>;
+};
+
 type AssetCard = {
   asset: string;
   price: number | null;
@@ -18,6 +26,9 @@ type AssetCard = {
   confidence: number;
   score: number;
   movePoints: number;
+  newsBias?: BiasBreakdown | null;
+  technicalBias?: BiasBreakdown | null;
+  combinedBias?: BiasBreakdown | null;
   regime: string | null;
   regimeConfidence: number | null;
   drivers: Driver[];
@@ -154,6 +165,7 @@ const labelMap: Record<string, string> = {
 };
 
 const assetOrder = ["ES", "NQ", "YM", "GOLD", "DXY", "USOIL"];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
 
 export default function Home() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -164,14 +176,14 @@ export default function Home() {
   const [now, setNow] = useState<Date>(new Date());
 
   async function fetchDashboard() {
-    const res = await fetch("http://localhost:5000/api/dashboard", { cache: "no-store" });
+    const res = await fetch(`${API_BASE_URL}/api/dashboard`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch dashboard");
     const data: DashboardResponse = await res.json();
     setDashboard(data);
   }
 
   async function fetchHistory(asset: string) {
-    const res = await fetch(`http://localhost:5000/api/bias-history-summary/${asset}`, {
+    const res = await fetch(`${API_BASE_URL}/api/bias-history-summary/${asset}`, {
       cache: "no-store",
     });
     if (!res.ok) throw new Error("Failed to fetch history summary");
@@ -180,7 +192,7 @@ export default function Home() {
   }
 
   async function fetchBiasShifts() {
-    const res = await fetch("http://localhost:5000/api/bias-shifts", { cache: "no-store" });
+    const res = await fetch(`${API_BASE_URL}/api/bias-shifts`, { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to fetch bias shifts");
     const data: BiasShiftsResponse = await res.json();
     setBiasShifts(data.shifts || []);
@@ -579,7 +591,7 @@ export default function Home() {
                 </div>
 
                 <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
-                  <h3 className="text-lg font-semibold text-cyan-300">AI Analysis</h3>
+                  <h3 className="text-lg font-semibold text-cyan-300">Bias Analysis</h3>
                   <p className="mt-3 text-base leading-8 text-gray-200">
                     {selectedAsset?.analysis || "No analysis available."}
                   </p>

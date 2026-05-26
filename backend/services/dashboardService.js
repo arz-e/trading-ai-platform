@@ -28,6 +28,9 @@ export function buildDashboardSnapshot({
       confidence: assetBias.confidence ?? 0,
       score: assetBias.score ?? 0,
       movePoints: assetBias.movePoints ?? 0,
+      newsBias: assetBias.newsBias ?? null,
+      technicalBias: assetBias.technicalBias ?? null,
+      combinedBias: assetBias.combinedBias ?? null,
 
       regime: assetBias.regime ?? regime?.regime ?? null,
       regimeConfidence: assetBias.regimeConfidence ?? regime?.confidence ?? null,
@@ -81,6 +84,9 @@ export function buildCompactHistorySummary(historyResponse = {}) {
     latest: history[0] ?? null,
 
     latestDrivers: history[0]?.drivers ?? [],
+    latestNewsBias: history[0]?.newsBias ?? null,
+    latestTechnicalBias: history[0]?.technicalBias ?? null,
+    latestCombinedBias: history[0]?.combinedBias ?? null,
 
     latestChange: history[0]?.change ?? null,
 
