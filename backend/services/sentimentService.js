@@ -4,6 +4,7 @@ import {
   assetRelevanceRules,
   sentimentSourceWeights,
 } from "../config/constants.js";
+import { containsKeyword } from "../utils/textMatching.js";
 
 /**
  * Analyze sentiment of headlines and detect impacted assets.
@@ -13,11 +14,11 @@ export function analyzeHeadlineSentiment(news = []) {
     const text = `${item.title} ${item.contentSnippet}`.toLowerCase();
 
     const positiveMatches = positiveSentimentPatterns.filter((p) =>
-      text.includes(p)
+      containsKeyword(text, p)
     );
 
     const negativeMatches = negativeSentimentPatterns.filter((p) =>
-      text.includes(p)
+      containsKeyword(text, p)
     );
 
     const positiveScore = positiveMatches.length;
@@ -64,7 +65,7 @@ function detectImpactedAssets(text) {
   for (const asset in assetRelevanceRules) {
     const keywords = assetRelevanceRules[asset];
 
-    const match = keywords.some((keyword) => text.includes(keyword));
+    const match = keywords.some((keyword) => containsKeyword(text, keyword));
 
     if (match) {
       assets.push(asset);

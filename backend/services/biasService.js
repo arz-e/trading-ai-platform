@@ -11,6 +11,7 @@ import {
   summarizeDrivers,
 } from "./aiService.js";
 import { crossAssetAdjustments, scoreToBias, scoreToConfidence } from "../utils/scoring.js";
+import { containsKeyword } from "../utils/textMatching.js";
 
 export async function buildBiasEngine(market = {}, news = [], calendarEvents = []) {
   const regime = detectMacroRegime(market);
@@ -90,7 +91,7 @@ function buildNewsBias(asset, news = []) {
     const headlineMatches = [];
 
     for (const word of rules.positive) {
-      if (text.includes(word)) {
+      if (containsKeyword(text, word)) {
         score += 1;
         hitCount++;
         headlineMatches.push({ keyword: word, direction: "positive" });
@@ -103,7 +104,7 @@ function buildNewsBias(asset, news = []) {
     }
 
     for (const word of rules.negative) {
-      if (text.includes(word)) {
+      if (containsKeyword(text, word)) {
         score -= 1;
         hitCount++;
         headlineMatches.push({ keyword: word, direction: "negative" });

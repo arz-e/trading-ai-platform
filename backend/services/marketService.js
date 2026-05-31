@@ -22,9 +22,7 @@ export async function fetchMarketData() {
         price: quote?.regularMarketPrice ?? null,
         change: quote?.regularMarketChange ?? null,
         percent: quote?.regularMarketChangePercent ?? null,
-        timestamp: quote?.regularMarketTime
-          ? new Date(quote.regularMarketTime * 1000).toISOString()
-          : new Date().toISOString(),
+        timestamp: normalizeMarketTimestamp(quote?.regularMarketTime),
       };
     } catch (err) {
       console.error(`Market fetch failed for ${symbol}:`, err.message);
@@ -127,4 +125,25 @@ export function computeCrossAssetState(market = {}) {
   }
 
   return state;
+}
+
+function normalizeMarketTimestamp(value) {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const timestampMs = value > 1000000000000 ? value : value * 1000;
+    return new Date(timestampMs).toISOString();
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
 }
