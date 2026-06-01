@@ -1,6 +1,11 @@
 import sqlite3 from "sqlite3";
+import fs from "fs";
+import path from "path";
 
 const DB_PATH = "./data/trading_ai.db";
+const DB_DIR = path.dirname(DB_PATH);
+
+fs.mkdirSync(DB_DIR, { recursive: true });
 
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) {
