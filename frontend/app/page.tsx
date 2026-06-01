@@ -155,6 +155,36 @@ type SessionInfo = {
   message: string;
 };
 
+type AppView = "dashboard" | "upcoming-news" | "evaluations" | "ai-analysis";
+
+type SourceStatus = {
+  id: string;
+  name: string;
+  url?: string;
+  category?: string;
+  source?: string;
+  status: string;
+  itemCount?: number;
+  eventCount?: number;
+  upcomingCount?: number;
+  error?: string | null;
+  checkedAt?: string;
+};
+
+type SystemStatus = {
+  ok: boolean;
+  now: string;
+  database?: {
+    connected: boolean;
+    biasHistoryRows: number;
+    biasRunRows: number;
+  };
+  dataSources?: {
+    news?: SourceStatus[];
+    calendar?: SourceStatus;
+  };
+};
+
 const labelMap: Record<string, string> = {
   ES: "S&P 500 Futures",
   NQ: "Nasdaq Futures",
@@ -167,10 +197,20 @@ const labelMap: Record<string, string> = {
 const assetOrder = ["ES", "NQ", "YM", "GOLD", "DXY", "USOIL"];
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
 
+const navItems: Array<{ id: AppView; label: string; disabled?: boolean }> = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "upcoming-news", label: "Upcoming News" },
+  { id: "evaluations", label: "Evaluations" },
+  { id: "ai-analysis", label: "AI Analysis", disabled: true },
+];
+
 export default function Home() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [historySummary, setHistorySummary] = useState<HistorySummaryResponse | null>(null);
   const [biasShifts, setBiasShifts] = useState<BiasShift[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [activeView, setActiveView] = useState<AppView>("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState("NQ");
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
@@ -199,10 +239,17 @@ export default function Home() {
     setBiasShifts(data.shifts || []);
   }
 
+  async function fetchSystemStatus() {
+    const res = await fetch(`${API_BASE_URL}/api/system`, { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch system status");
+    const data: SystemStatus = await res.json();
+    setSystemStatus(data);
+  }
+
   useEffect(() => {
     async function boot() {
       try {
-        await Promise.all([fetchDashboard(), fetchBiasShifts()]);
+        await Promise.all([fetchDashboard(), fetchBiasShifts(), fetchSystemStatus()]);
       } catch (err) {
         console.error(err);
       } finally {
@@ -215,6 +262,7 @@ export default function Home() {
     const interval = setInterval(() => {
       fetchDashboard().catch(console.error);
       fetchBiasShifts().catch(console.error);
+      fetchSystemStatus().catch(console.error);
     }, 15000);
 
     return () => clearInterval(interval);
@@ -289,6 +337,18 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#0a0f1a] text-white p-6">
       <div className="mx-auto max-w-7xl">
+        <AppShellHeader
+          activeView={activeView}
+          menuOpen={menuOpen}
+          onToggleMenu={() => setMenuOpen((value) => !value)}
+          onSelectView={(view) => {
+            setActiveView(view);
+            setMenuOpen(false);
+          }}
+        />
+
+        {activeView === "dashboard" ? (
+          <>
         <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Hybrid Trader Dashboard</h1>
@@ -309,6 +369,8 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        <DataSourceHealthCard systemStatus={systemStatus} />
 
         <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -759,8 +821,214 @@ export default function Home() {
             </div>
           </>
         )}
+          </>
+        ) : (
+          <PlaceholderView view={activeView} />
+        )}
       </div>
     </main>
+  );
+}
+
+function AppShellHeader({
+  activeView,
+  menuOpen,
+  onToggleMenu,
+  onSelectView,
+}: {
+  activeView: AppView;
+  menuOpen: boolean;
+  onToggleMenu: () => void;
+  onSelectView: (view: AppView) => void;
+}) {
+  const activeLabel = navItems.find((item) => item.id === activeView)?.label ?? "Dashboard";
+
+  return (
+    <div className="relative mb-6">
+      <div className="flex items-center justify-between rounded-2xl border border-gray-800 bg-[#111827] px-4 py-3">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onToggleMenu}
+            className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 rounded-xl border border-gray-700 bg-[#0d1423] transition hover:border-cyan-500"
+            aria-label="Open navigation"
+          >
+            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
+            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
+            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
+          </button>
+
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Trading AI Platform</p>
+            <p className="text-lg font-semibold">{activeLabel}</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2 text-sm text-gray-400">
+          Menu
+        </div>
+      </div>
+
+      {menuOpen ? (
+        <div className="absolute left-0 top-16 z-20 w-72 rounded-2xl border border-gray-800 bg-[#111827] p-3 shadow-2xl">
+          <div className="space-y-2">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                disabled={item.disabled}
+                onClick={() => onSelectView(item.id)}
+                className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
+                  activeView === item.id
+                    ? "border-cyan-500 bg-cyan-950/30 text-cyan-200"
+                    : "border-gray-800 bg-[#0d1423] text-gray-300"
+                } ${item.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+              >
+                {item.label}
+                {item.disabled ? " · Coming soon" : ""}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | null }) {
+  const newsSources = systemStatus?.dataSources?.news ?? [];
+  const calendar = systemStatus?.dataSources?.calendar ?? null;
+  const degraded = isDataDegraded(systemStatus);
+
+  return (
+    <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Data Source Health</p>
+          <h2 className="mt-2 text-xl font-semibold">
+            {degraded ? "Degraded data sources" : "Sources operational"}
+          </h2>
+        </div>
+
+        <span
+          className={`w-fit rounded-xl border px-3 py-1 text-xs font-semibold ${
+            degraded
+              ? "border-yellow-700 bg-yellow-900/20 text-yellow-300"
+              : "border-green-700 bg-green-900/20 text-green-300"
+          }`}
+        >
+          {degraded ? "Warning" : "Healthy"}
+        </span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Database</p>
+            <StatusPill status={systemStatus?.database?.connected ? "OK" : "ERROR"} />
+          </div>
+          <p className="mt-3 text-sm text-gray-400">
+            Bias rows: {systemStatus?.database?.biasHistoryRows ?? "--"}
+          </p>
+          <p className="mt-1 text-sm text-gray-400">
+            Run rows: {systemStatus?.database?.biasRunRows ?? "--"}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Economic Calendar</p>
+            <StatusPill status={calendar?.status ?? "UNKNOWN"} />
+          </div>
+          <p className="mt-3 text-sm text-gray-400">
+            Source: {calendar?.name ?? "--"}
+          </p>
+          <p className="mt-1 text-sm text-gray-400">
+            Events: {calendar?.eventCount ?? "--"} · Upcoming: {calendar?.upcomingCount ?? "--"}
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Checked: {formatHealthTime(calendar?.checkedAt)}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">News Feeds</p>
+            <span className="text-xs text-gray-400">
+              {newsSources.filter((source) => source.status === "OK").length}/{newsSources.length || "--"} OK
+            </span>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {newsSources.length > 0 ? (
+              newsSources.map((source) => (
+                <div
+                  key={source.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#111827] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-gray-200">{source.name}</p>
+                    <p className="text-xs text-gray-500">
+                      Items: {source.itemCount ?? 0} · Checked: {formatHealthTime(source.checkedAt)}
+                    </p>
+                  </div>
+                  <StatusPill status={source.status} />
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-400">No source status loaded yet.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const normalized = status.toUpperCase();
+  const className =
+    normalized === "OK"
+      ? "border-green-700 bg-green-900/20 text-green-300"
+      : normalized === "DISABLED"
+        ? "border-gray-700 bg-gray-800 text-gray-300"
+        : normalized === "UNKNOWN"
+          ? "border-gray-700 bg-[#111827] text-gray-400"
+          : "border-yellow-700 bg-yellow-900/20 text-yellow-300";
+
+  return (
+    <span className={`shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${className}`}>
+      {normalized}
+    </span>
+  );
+}
+
+function PlaceholderView({ view }: { view: AppView }) {
+  const labels: Record<AppView, { title: string; subtitle: string }> = {
+    dashboard: {
+      title: "Dashboard",
+      subtitle: "Live market bias dashboard.",
+    },
+    "upcoming-news": {
+      title: "Upcoming News",
+      subtitle: "Economic calendar and headline detail view will be built in PR #6.",
+    },
+    evaluations: {
+      title: "Evaluations",
+      subtitle: "Bias evaluation and post-mortem UI will be built in PR #7.",
+    },
+    "ai-analysis": {
+      title: "AI Analysis",
+      subtitle: "Coming soon after the input and review workflows are stable.",
+    },
+  };
+
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-[#111827] p-8">
+      <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Workspace</p>
+      <h1 className="mt-3 text-3xl font-bold">{labels[view].title}</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-7 text-gray-300">{labels[view].subtitle}</p>
+    </div>
   );
 }
 
@@ -831,6 +1099,29 @@ function formatShortTime(value: string) {
 
 function formatCompactNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function formatHealthTime(value?: string) {
+  if (!value) return "--";
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function isDataDegraded(systemStatus: SystemStatus | null) {
+  if (!systemStatus) return true;
+
+  const databaseDown = !systemStatus.database?.connected;
+  const newsSources = systemStatus.dataSources?.news ?? [];
+  const calendar = systemStatus.dataSources?.calendar;
+  const newsDegraded = newsSources.some((source) => source.status === "ERROR");
+  const calendarDegraded =
+    calendar?.status === "ERROR" ||
+    calendar?.status === "UNAVAILABLE" ||
+    calendar?.status === "STALE";
+
+  return databaseDown || newsDegraded || calendarDegraded;
 }
 
 function formatUtcClock(date: Date) {
