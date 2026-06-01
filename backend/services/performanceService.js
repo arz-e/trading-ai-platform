@@ -54,6 +54,22 @@ export function evaluatePrediction(current, next) {
     predictedMove === 0
       ? 0
       : Math.max(0, 100 - (moveError / Math.abs(predictedMove)) * 100);
+  const holdingPeriodMinutes = round(
+    (new Date(next.generatedAt).getTime() -
+      new Date(current.generatedAt).getTime()) /
+      60000
+  );
+  const context = {
+    next,
+    predictedBias,
+    predictedMove,
+    actualMove: round(actualMove),
+    actualMovePercent: round(actualMovePercent),
+    moveError: round(moveError),
+    moveAccuracy: round(moveAccuracy),
+    holdingPeriodMinutes,
+    noiseThreshold: round(noiseThreshold),
+  };
 
   return {
     evaluatedAgainstId: next.id,
@@ -67,12 +83,8 @@ export function evaluatePrediction(current, next) {
     directionCorrect: verdict === "correct",
     moveError: round(moveError),
     moveAccuracy: round(moveAccuracy),
-    holdingPeriodMinutes: round(
-      (new Date(next.generatedAt).getTime() -
-        new Date(current.generatedAt).getTime()) /
-        60000
-    ),
-    diagnosis: buildDiagnosis(current, verdict),
+    holdingPeriodMinutes,
+    diagnosis: buildDiagnosis(current, verdict, context),
   };
 }
 
@@ -142,7 +154,6 @@ export function buildPostMortem(evaluations = [], id) {
     sentimentSummary: row.sentimentSummary ?? null,
     marketSnapshot: row.marketSnapshot ?? null,
     evaluation: row.evaluation,
-    reviewQuestions: buildReviewQuestions(row),
   };
 }
 
@@ -180,7 +191,7 @@ function resolveVerdict(bias, move, noiseThreshold) {
   return "inconclusive";
 }
 
-function buildDiagnosis(row, verdict) {
+function buildDiagnosis(row, verdict, context = {}) {
   const newsBias = row.newsBias?.bias ?? null;
   const technicalBias = row.technicalBias?.bias ?? null;
   const combinedBias = row.bias ?? null;
@@ -190,12 +201,25 @@ function buildDiagnosis(row, verdict) {
     newsBias !== "Neutral" &&
     technicalBias !== "Neutral" &&
     newsBias !== technicalBias;
+  const expectedText = formatExpectedMoveForReview(
+    context.predictedBias,
+    context.predictedMove
+  );
+  const actualText = `${formatSigned(context.actualMove)} pts (${formatSigned(
+    context.actualMovePercent
+  )}%)`;
+  const holdingText = `${context.holdingPeriodMinutes ?? 0} minutes`;
+  const moveFit = resolveMoveFitLabel(context.moveAccuracy);
+  const conflictText = disagreed
+    ? ` News bias was ${newsBias} while technical bias was ${technicalBias}, so this was a mixed input.`
+    : ` News and technical inputs were ${newsBias || "not available"} / ${
+        technicalBias || "not available"
+      }.`;
 
   if (verdict === "correct") {
     return {
       label: "bias_confirmed",
-      summary:
-        "The next logged price moved in the same direction as the combined bias.",
+      summary: `${row.asset} moved in the ${combinedBias?.toLowerCase()} direction over ${holdingText}. The call expected ${expectedText}; the next saved /api/bias run showed ${actualText}. Move fit was ${moveFit} at ${context.moveAccuracy ?? 0}% accuracy.${conflictText}`,
       newsTechnicalDisagreement: disagreed,
     };
   }
@@ -203,7 +227,7 @@ function buildDiagnosis(row, verdict) {
   if (verdict === "inconclusive") {
     return {
       label: "move_too_small",
-      summary: "The next logged price move was too small to judge the bias cleanly.",
+      summary: `${row.asset} moved only ${actualText} over ${holdingText}, inside the noise threshold of ${context.noiseThreshold ?? 0} pts. The direction result is inconclusive even though the saved call expected ${expectedText}. A longer holding period or more saved /api/bias runs would be needed to judge the bias cleanly.${conflictText}`,
       newsTechnicalDisagreement: disagreed,
     };
   }
@@ -211,37 +235,38 @@ function buildDiagnosis(row, verdict) {
   if (disagreed) {
     return {
       label: "news_technical_conflict",
-      summary:
-        "The combined bias was wrong while news and technical bias were not aligned. Review which side was overweighted.",
+      summary: `${row.asset} moved against the ${combinedBias?.toLowerCase()} call over ${holdingText}. The call expected ${expectedText}, but the next saved /api/bias run showed ${actualText}. News and technical bias disagreed (${newsBias} vs ${technicalBias}), so review which side the combined score overweighted.`,
       newsTechnicalDisagreement: true,
     };
   }
 
   return {
     label: "bias_failed",
-    summary:
-      "The next logged price moved against the combined bias. Review headline drivers, technical context, and event risk.",
+    summary: `${row.asset} moved against the ${combinedBias?.toLowerCase()} call over ${holdingText}. The call expected ${expectedText}, but the next saved /api/bias run showed ${actualText}. Review whether headline drivers, technical context, event risk, or cross-asset pressure changed before the next saved run.`,
     newsTechnicalDisagreement: false,
     combinedBias,
   };
 }
 
-function buildReviewQuestions(row) {
-  const questions = [
-    "Did the news bias and technical bias agree, or was this a mixed setup?",
-    "Were the strongest drivers still relevant by the next logged price?",
-    "Was there an economic calendar event or volatility shock between the two logs?",
-  ];
+function resolveMoveFitLabel(moveAccuracy = 0) {
+  if (moveAccuracy >= 70) return "good";
+  if (moveAccuracy >= 35) return "fair";
+  return "poor";
+}
 
-  if (row.evaluation?.diagnosis?.label === "news_technical_conflict") {
-    questions.unshift("Did the combined score overweight news or technicals?");
-  }
+function formatExpectedMoveForReview(bias, move = 0) {
+  const amount = Math.abs(Number(move) || 0);
+  const formatted = amount >= 100 ? amount.toFixed(0) : amount.toFixed(2);
 
-  if (row.evaluation?.verdict === "wrong") {
-    questions.unshift("What changed after this bias was logged?");
-  }
+  if (bias === "Bearish") return `${formatted} pts downside`;
+  if (bias === "Bullish") return `${formatted} pts upside`;
+  return `${formatted} pts range`;
+}
 
-  return questions;
+function formatSigned(value = 0) {
+  const numeric = Number(value) || 0;
+  const formatted = Math.abs(numeric) >= 100 ? numeric.toFixed(0) : numeric.toFixed(2);
+  return `${numeric >= 0 ? "+" : ""}${formatted}`;
 }
 
 function countVerdicts(rows = []) {
