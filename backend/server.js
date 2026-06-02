@@ -142,45 +142,51 @@ app.get("/api/briefing", async (req, res) => {
 
 app.get("/api/bias", async (req, res) => {
   try {
-    const [market, news, calendarEvents] = await Promise.all([
-      fetchMarketData(),
-      fetchNewsData(),
-      fetchCalendarEvents(),
-    ]);
-
-    const biasResult = await buildBiasEngine(market, news, calendarEvents);
-    const generatedAt = new Date().toISOString();
-
-    latestBiasRun = {
-      generatedAt,
-      headlineCount: news.length,
-      regime: biasResult.regime,
-      eventRisk: biasResult.eventRisk,
-      assetCount: Object.keys(biasResult.assets).length,
-    };
-
-    logBiasRun({
-      biasOutput: biasResult.assets,
-      market,
-      headlineCount: news.length,
-      generatedAt,
-      regimeData: biasResult.regime,
-      eventRisk: biasResult.eventRisk,
-    });
-
-    res.json({
-      market,
-      regime: biasResult.regime,
-      eventRisk: biasResult.eventRisk,
-      sentiment: biasResult.sentiment,
-      bias: biasResult.assets,
-      headlineCount: news.length,
-      calendarEventCount: calendarEvents.length,
-      generatedAt,
-    });
+    const snapshot = await buildBiasSnapshot();
+    res.json(snapshot);
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Failed to generate bias" });
+  }
+});
+
+app.post("/api/bias/log", async (req, res) => {
+  try {
+    const snapshot = await buildBiasSnapshot();
+    const savedRun = await logBiasRun({
+      biasOutput: snapshot.bias,
+      market: snapshot.market,
+      headlineCount: snapshot.headlineCount,
+      generatedAt: snapshot.generatedAt,
+      regimeData: snapshot.regime,
+      eventRisk: snapshot.eventRisk,
+      newsContext: snapshot.newsContext,
+      calendarContext: snapshot.calendarContext,
+      sourceStatus: snapshot.sourceStatus,
+      sessionContext: snapshot.sessionContext,
+      rawContext: snapshot.rawContext,
+      runType: "manual",
+    });
+
+    latestBiasRun = {
+      runId: savedRun.runId,
+      generatedAt: savedRun.generatedAt,
+      loggedAt: savedRun.loggedAt,
+      headlineCount: savedRun.headlineCount,
+      regime: savedRun.regime,
+      eventRisk: savedRun.eventRisk,
+      assetCount: savedRun.assetCount,
+      runType: "manual",
+    };
+
+    res.status(201).json({
+      saved: true,
+      run: latestBiasRun,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to log bias run" });
   }
 });
 
@@ -390,4 +396,63 @@ function normalizeLimit(value, fallback, max) {
 
 function normalizeHistoryLimit(resultLimit) {
   return Math.max(200, Math.min(5000, resultLimit * 50));
+}
+
+async function buildBiasSnapshot() {
+  const [market, newsBundle, calendarBundle] = await Promise.all([
+    fetchMarketData(),
+    fetchNewsBundle(),
+    fetchCalendarBundle(),
+  ]);
+  const news = newsBundle.items ?? [];
+  const calendarEvents = calendarBundle.events ?? [];
+  const biasResult = await buildBiasEngine(market, news, calendarEvents);
+  const generatedAt = new Date().toISOString();
+
+  return {
+    market,
+    regime: biasResult.regime,
+    eventRisk: biasResult.eventRisk,
+    sentiment: biasResult.sentiment,
+    bias: biasResult.assets,
+    headlineCount: news.length,
+    calendarEventCount: calendarEvents.length,
+    newsContext: newsBundle,
+    calendarContext: calendarBundle,
+    sourceStatus: {
+      news: newsBundle.sources ?? [],
+      calendar: calendarBundle.source ?? null,
+    },
+    sessionContext: buildSessionContext(generatedAt),
+    rawContext: {
+      market,
+      news: newsBundle,
+      calendar: calendarBundle,
+    },
+    generatedAt,
+  };
+}
+
+function buildSessionContext(generatedAt) {
+  const date = new Date(generatedAt);
+  const totalMinutes = date.getUTCHours() * 60 + date.getUTCMinutes();
+
+  return {
+    generatedAt,
+    utcTime: date.toISOString(),
+    sessions: [
+      buildSessionInfo("Asia", totalMinutes, 0, 9 * 60),
+      buildSessionInfo("London", totalMinutes, 8 * 60, 17 * 60),
+      buildSessionInfo("New York", totalMinutes, 13 * 60 + 30, 20 * 60),
+    ],
+  };
+}
+
+function buildSessionInfo(name, nowMinutes, openMinutes, closeMinutes) {
+  return {
+    name,
+    status: nowMinutes >= openMinutes && nowMinutes < closeMinutes ? "RUNNING" : "CLOSED",
+    openUtcMinutes: openMinutes,
+    closeUtcMinutes: closeMinutes,
+  };
 }

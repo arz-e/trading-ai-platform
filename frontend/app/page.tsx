@@ -204,6 +204,14 @@ type SystemStatus = {
     news?: SourceStatus[];
     calendar?: SourceStatus;
   };
+  latestBiasRun?: {
+    runId?: number;
+    generatedAt?: string;
+    loggedAt?: string;
+    headlineCount?: number;
+    assetCount?: number;
+    runType?: string;
+  } | null;
 };
 
 type CalendarEvent = {
@@ -363,6 +371,10 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [upcomingLoading, setUpcomingLoading] = useState(false);
   const [evaluationsLoading, setEvaluationsLoading] = useState(false);
+  const [logStatus, setLogStatus] = useState<{
+    state: "idle" | "saving" | "saved" | "error";
+    message: string;
+  }>({ state: "idle", message: "" });
   const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
 
@@ -394,6 +406,43 @@ export default function Home() {
     if (!res.ok) throw new Error("Failed to fetch system status");
     const data: SystemStatus = await res.json();
     setSystemStatus(data);
+  }
+
+  async function logCurrentBiasRun() {
+    setLogStatus({
+      state: "saving",
+      message: "Saving current deterministic bias snapshot...",
+    });
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/bias/log`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!res.ok) throw new Error("Failed to save bias run");
+
+      const data: { run?: { runId?: number; loggedAt?: string } } = await res.json();
+      setLogStatus({
+        state: "saved",
+        message: `Saved experiment run #${data.run?.runId ?? "--"} at ${formatDateTime(data.run?.loggedAt)}`,
+      });
+
+      await Promise.all([
+        fetchSystemStatus(),
+        fetchBiasShifts(),
+        fetchHistory(selected),
+        activeView === "evaluations" ? fetchEvaluationsData() : Promise.resolve(),
+      ]);
+    } catch (err) {
+      console.error(err);
+      setLogStatus({
+        state: "error",
+        message: "Could not save the bias run. Check backend logs and data-source health.",
+      });
+    }
   }
 
   async function fetchUpcomingNewsData() {
@@ -599,8 +648,18 @@ export default function Home() {
             <div className="rounded-xl border border-gray-800 bg-[#111827] px-4 py-2 text-sm text-gray-300">
               Event Risk: {dashboard?.eventRisk?.level ?? "--"}
             </div>
+            <button
+              type="button"
+              onClick={logCurrentBiasRun}
+              disabled={logStatus.state === "saving"}
+              className="rounded-xl border border-cyan-700 bg-cyan-950/30 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {logStatus.state === "saving" ? "Saving..." : "Save Bias Run"}
+            </button>
           </div>
         </div>
+
+        <BiasLoggingCard systemStatus={systemStatus} logStatus={logStatus} />
 
         <DataSourceHealthCard systemStatus={systemStatus} />
 
@@ -1164,6 +1223,68 @@ function AppShellHeader({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function BiasLoggingCard({
+  systemStatus,
+  logStatus,
+}: {
+  systemStatus: SystemStatus | null;
+  logStatus: {
+    state: "idle" | "saving" | "saved" | "error";
+    message: string;
+  };
+}) {
+  const latest = systemStatus?.latestBiasRun ?? null;
+  const statusText =
+    logStatus.message ||
+    "Save the current deterministic snapshot into the append-only experiment log.";
+
+  return (
+    <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Experiment Logging</p>
+          <h2 className="mt-2 text-xl font-semibold">Bias Run Audit Trail</h2>
+          <p className="mt-3 max-w-4xl text-sm leading-7 text-gray-300">
+            Saving records the full research snapshot: market prices, source health, weighted news matches,
+            calendar risk, technical context, formula components, and final bias output. Live dashboard refreshes
+            do not automatically save rows.
+          </p>
+        </div>
+
+        <StatusPill
+          status={
+            logStatus.state === "error"
+              ? "ERROR"
+              : logStatus.state === "saved"
+                ? "OK"
+                : latest?.runId
+                  ? "READY"
+                  : "IDLE"
+          }
+        />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <MetricCard
+          label="Last Saved Run"
+          value={latest?.runId ? `#${latest.runId}` : "--"}
+          helper={latest?.loggedAt ? formatDateTime(latest.loggedAt) : "no saved run this session"}
+        />
+        <MetricCard
+          label="Saved Assets"
+          value={latest?.assetCount ?? "--"}
+          helper={`${latest?.headlineCount ?? "--"} headlines captured`}
+        />
+        <MetricCard
+          label="Save Status"
+          value={logStatus.state === "idle" ? "Ready" : logStatus.state}
+          helper={statusText}
+        />
+      </div>
     </div>
   );
 }
