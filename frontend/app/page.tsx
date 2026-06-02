@@ -1853,9 +1853,15 @@ function WatchlistSearchBar({
 function MarketFlowProxyCard({ marketFlow }: { marketFlow?: MarketFlowSnapshot }) {
   const inflows = marketFlow?.inflows ?? [];
   const outflows = marketFlow?.outflows ?? [];
+  const rankedRows = marketFlow?.rankedFlows?.length
+    ? marketFlow.rankedFlows
+    : [...inflows, ...outflows].sort((a, b) => Math.abs(b.flowScore) - Math.abs(a.flowScore));
+  const strongestInflows = inflows.slice(0, 4);
+  const strongestOutflows = outflows.slice(0, 4);
 
   return (
-    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+    <section className="mb-6 overflow-hidden rounded-2xl border border-gray-800 bg-[#111827]">
+      <div className="border-b border-gray-800 bg-[#0d1423]/70 p-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Flow Proxy</p>
@@ -1869,37 +1875,128 @@ function MarketFlowProxyCard({ marketFlow }: { marketFlow?: MarketFlowSnapshot }
         <StatusPill status={marketFlow?.status ?? "UNKNOWN"} />
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <FlowList title="Strongest Inflows" rows={inflows} empty="No inflow proxy rows loaded." />
-        <FlowList title="Strongest Outflows" rows={outflows} empty="No outflow proxy rows loaded." />
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <FlowSummaryTile label="Risk Tone" value={marketFlow?.riskTone?.replaceAll("_", " ") ?? "Unknown"} />
+          <FlowSummaryTile label="Strongest Inflow" value={strongestInflows[0]?.asset ?? "None"} tone="positive" />
+          <FlowSummaryTile label="Strongest Outflow" value={strongestOutflows[0]?.asset ?? "None"} tone="negative" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-0 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <FlowDashboard rows={rankedRows} />
+        <div className="border-t border-gray-800 bg-[#0b1220] p-4 lg:border-l lg:border-t-0">
+          <FlowMiniList title="Strongest Inflows" rows={strongestInflows} empty="No inflow pressure loaded." />
+          <div className="mt-4">
+            <FlowMiniList title="Strongest Outflows" rows={strongestOutflows} empty="No outflow pressure loaded." />
+          </div>
+        </div>
       </div>
     </section>
   );
 }
 
-function FlowList({ title, rows, empty }: { title: string; rows: FlowRow[]; empty: string }) {
+function FlowSummaryTile({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "positive" | "negative" | "neutral" }) {
+  const toneClass =
+    tone === "positive"
+      ? "text-green-300"
+      : tone === "negative"
+        ? "text-red-300"
+        : "text-gray-100";
+
   return (
-    <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+    <div className="rounded-xl border border-gray-800 bg-[#111827] px-3 py-2">
+      <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{label}</p>
+      <p className={`mt-1 truncate text-sm font-semibold capitalize ${toneClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function FlowDashboard({ rows }: { rows: FlowRow[] }) {
+  const visibleRows = rows.slice(0, 12);
+
+  return (
+    <div className="p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-100">Ranked Proxy Pressure</h3>
+          <p className="mt-1 text-xs text-gray-500">Negative pressure points left. Positive pressure points right.</p>
+        </div>
+        <div className="hidden items-center gap-3 text-[11px] text-gray-500 sm:flex">
+          <span className="text-red-300">Outflow</span>
+          <span className="h-px w-8 bg-gray-700" />
+          <span className="text-green-300">Inflow</span>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-gray-800 bg-[#0b1220] p-3">
+        <div className="relative space-y-2">
+          <div className="absolute bottom-0 left-1/2 top-0 hidden w-px bg-gray-700/80 sm:block" />
+          {visibleRows.map((row) => (
+            <FlowPressureRow key={`flow-row-${row.asset}`} row={row} />
+          ))}
+          {visibleRows.length === 0 ? (
+            <p className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-4 text-sm text-gray-400">
+              Market flow proxy rows are still loading.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FlowPressureRow({ row }: { row: FlowRow }) {
+  const isPositive = row.flowScore >= 0 || row.direction === "inflow";
+  const width = `${Math.min(100, Math.abs(row.flowScore))}%`;
+  const reason = row.reasons?.[0] ?? row.direction;
+
+  return (
+    <div className="relative grid grid-cols-1 gap-2 rounded-lg border border-gray-800 bg-[#111827] px-3 py-2 sm:grid-cols-[120px_minmax(0,1fr)_72px] sm:items-center">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 rounded-md bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-100">{row.asset}</span>
+          <span className="truncate text-xs text-gray-500">{row.displayName}</span>
+        </div>
+      </div>
+
+      <div>
+        <div className="grid grid-cols-2 gap-0">
+          <div className="flex h-3 items-center justify-end rounded-l-full bg-gray-800/80">
+            {!isPositive ? <div className="h-3 rounded-l-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.35)]" style={{ width }} /> : null}
+          </div>
+          <div className="flex h-3 items-center rounded-r-full bg-gray-800/80">
+            {isPositive ? <div className="h-3 rounded-r-full bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.35)]" style={{ width }} /> : null}
+          </div>
+        </div>
+        <p className="mt-1 truncate text-xs text-gray-500">{reason}</p>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 sm:block sm:text-right">
+        <span className={`text-xs font-semibold capitalize ${isPositive ? "text-green-300" : "text-red-300"}`}>
+          {row.direction}
+        </span>
+        <p className={`text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>{formatScore(row.flowScore)}</p>
+      </div>
+    </div>
+  );
+}
+
+function FlowMiniList({ title, rows, empty }: { title: string; rows: FlowRow[]; empty: string }) {
+  return (
+    <div>
       <h3 className="text-sm font-semibold text-gray-100">{title}</h3>
-      <div className="mt-3 space-y-3">
-        {rows.slice(0, 5).map((row) => (
-          <div key={`${title}-${row.asset}`} className="rounded-xl border border-gray-800 bg-[#111827] p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-gray-100">{row.asset}</p>
-                <p className="mt-1 text-xs text-gray-500">{row.riskBucket} | {row.strength}</p>
+      <div className="mt-3 space-y-2">
+        {rows.map((row) => (
+          <div key={`${title}-${row.asset}`} className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-gray-100">{row.asset}</p>
+                <p className="mt-1 truncate text-xs text-gray-500">{row.reasons?.[0] ?? row.strength}</p>
               </div>
-              <div className={`text-right text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>
+              <p className={`shrink-0 text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>
                 {formatScore(row.flowScore)}
-              </div>
+              </p>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-800">
-              <div
-                className={row.direction === "inflow" ? "h-full bg-green-400" : "h-full bg-red-400"}
-                style={{ width: `${Math.min(100, Math.abs(row.flowScore))}%` }}
-              />
-            </div>
-            <p className="mt-2 text-xs leading-5 text-gray-400">{row.reasons?.[0] ?? row.direction}</p>
           </div>
         ))}
         {rows.length === 0 ? <p className="text-sm text-gray-400">{empty}</p> : null}
