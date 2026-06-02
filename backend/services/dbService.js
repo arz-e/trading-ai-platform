@@ -899,8 +899,18 @@ function buildAssetFormulaComponents({
     technicalComponents: row.technicalBias?.components ?? [],
     technicalContext: row.technicalBias?.context ?? null,
     newsComponents: row.newsBias?.matchedHeadlines ?? [],
+    marketFlowSnapshot: row.flow ?? null,
+    newsFlowRelationship: row.newsFlowRelationship ?? null,
+    optionsPressureSnapshot: row.optionsPressure ?? null,
+    confluence: row.confluence ?? null,
+    trendState: row.trendState ?? null,
+    edgeScore: row.edgeScore ?? null,
+    watchReasons: row.watchReasons ?? [],
+    avoidReasons: row.avoidReasons ?? [],
     formulas: {
       combinedBias: "scoreToBias(newsScore + technicalScore + crossAssetConfluence)",
+      advancedConfluence:
+        "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure - eventRiskAdjustment",
       confidence:
         "scoreToConfidence(combinedScore, reasonCount) - eventRisk.confidencePenalty",
       expectedMove:

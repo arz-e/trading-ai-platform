@@ -61,6 +61,14 @@ type AssetCard = {
   newsBias?: BiasBreakdown | null;
   technicalBias?: BiasBreakdown | null;
   combinedBias?: BiasBreakdown | null;
+  flow?: FlowRow | null;
+  newsFlowRelationship?: NewsFlowRelationship | null;
+  optionsPressure?: OptionsPressureAsset | null;
+  confluence?: AdvancedConfluence | null;
+  trendState?: string | null;
+  edgeScore?: number | null;
+  watchReasons?: string[];
+  avoidReasons?: string[];
   regime: string | null;
   regimeConfidence: number | null;
   drivers: Driver[];
@@ -74,6 +82,82 @@ type AssetCard = {
   };
   analysis: string;
   lastUpdated?: string;
+};
+
+type FlowRow = {
+  asset: string;
+  displayName: string;
+  providerSymbol: string;
+  riskBucket: string;
+  relatedCoreAssets: string[];
+  price: number | null;
+  change: number | null;
+  percent: number | null;
+  volume?: number | null;
+  flowScore: number;
+  direction: "inflow" | "outflow" | "neutral";
+  strength: "strong" | "moderate" | "weak" | "flat";
+  reasons: string[];
+};
+
+type MarketFlowSnapshot = {
+  generatedAt: string;
+  status: string;
+  riskTone: string;
+  summary: string;
+  rankedFlows: FlowRow[];
+  inflows: FlowRow[];
+  outflows: FlowRow[];
+  contradictions?: Array<{ type?: string; message: string; assets?: string[] }>;
+  dataQuality?: {
+    availableRows: number;
+    totalRows: number;
+    staleRows: number;
+    status: string;
+  };
+};
+
+type NewsFlowRelationship = {
+  relationship: string;
+  confidence: number;
+  confirmingHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  contradictingHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  explanatoryHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  unrelatedHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  reasons?: string[];
+};
+
+type OptionsPressureAsset = {
+  asset: string;
+  status: string;
+  pressureState: string;
+  trendImpact: string;
+  reason: string;
+};
+
+type OptionsPressureSnapshot = {
+  generatedAt: string;
+  status: string;
+  summary: string;
+  assets: OptionsPressureAsset[];
+};
+
+type AdvancedConfluence = {
+  asset: string;
+  finalBias: string;
+  confidence: number;
+  edgeScore: number;
+  trendState: string;
+  flowAlignment: string;
+  newsAlignment: string;
+  macroAlignment: string;
+  optionsPressureAlignment: string;
+  eventRiskAdjustment?: { score: number; level: string; reasons?: string[] };
+  components: Array<{ key: string; label: string; weight: number; score: number }>;
+  contradictions: string[];
+  watchReasons: string[];
+  avoidReasons: string[];
+  reasons: string[];
 };
 
 type Briefing = {
@@ -96,6 +180,8 @@ type FlashNewsItem = {
 
 type DashboardResponse = {
   generatedAt: string;
+  marketFlow?: MarketFlowSnapshot;
+  optionsPressure?: OptionsPressureSnapshot;
   regime?: {
     regime: string;
     confidence: number;
@@ -883,6 +969,8 @@ export default function Home() {
 
         <DataSourceHealthCard systemStatus={systemStatus} />
 
+        <MarketFlowProxyCard marketFlow={dashboard?.marketFlow} />
+
         <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
@@ -1219,6 +1307,10 @@ export default function Home() {
                   eventRisk={dashboard?.eventRisk}
                   topHeadlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
                 />
+
+                {selectedAsset?.hasBiasData ? (
+                  <AdvancedConfluencePanel asset={selectedAsset} />
+                ) : null}
 
                 {!selectedAsset?.hasBiasData ? (
                   <QuoteOnlyDetailsPanel asset={selectedAsset} />
@@ -1758,6 +1850,64 @@ function WatchlistSearchBar({
   );
 }
 
+function MarketFlowProxyCard({ marketFlow }: { marketFlow?: MarketFlowSnapshot }) {
+  const inflows = marketFlow?.inflows ?? [];
+  const outflows = marketFlow?.outflows ?? [];
+
+  return (
+    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Flow Proxy</p>
+          <h2 className="mt-2 text-xl font-semibold">
+            {marketFlow?.riskTone?.replaceAll("_", " ") ?? "Loading flow context"}
+          </h2>
+          <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-400">
+            {marketFlow?.summary ?? "Comparing proxy moves across risk assets, safe havens, dollar, rates, energy, and volatility."}
+          </p>
+        </div>
+        <StatusPill status={marketFlow?.status ?? "UNKNOWN"} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <FlowList title="Strongest Inflows" rows={inflows} empty="No inflow proxy rows loaded." />
+        <FlowList title="Strongest Outflows" rows={outflows} empty="No outflow proxy rows loaded." />
+      </div>
+    </section>
+  );
+}
+
+function FlowList({ title, rows, empty }: { title: string; rows: FlowRow[]; empty: string }) {
+  return (
+    <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+      <h3 className="text-sm font-semibold text-gray-100">{title}</h3>
+      <div className="mt-3 space-y-3">
+        {rows.slice(0, 5).map((row) => (
+          <div key={`${title}-${row.asset}`} className="rounded-xl border border-gray-800 bg-[#111827] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold text-gray-100">{row.asset}</p>
+                <p className="mt-1 text-xs text-gray-500">{row.riskBucket} | {row.strength}</p>
+              </div>
+              <div className={`text-right text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>
+                {formatScore(row.flowScore)}
+              </div>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-800">
+              <div
+                className={row.direction === "inflow" ? "h-full bg-green-400" : "h-full bg-red-400"}
+                style={{ width: `${Math.min(100, Math.abs(row.flowScore))}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs leading-5 text-gray-400">{row.reasons?.[0] ?? row.direction}</p>
+          </div>
+        ))}
+        {rows.length === 0 ? <p className="text-sm text-gray-400">{empty}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const normalized = status.toUpperCase();
   const className =
@@ -1841,6 +1991,83 @@ function QuoteOnlyDetailsPanel({ asset }: { asset: GroupedAsset | null }) {
           {asset.quoteError}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function AdvancedConfluencePanel({ asset }: { asset: GroupedAsset }) {
+  const confluence = asset.confluence;
+  const optionsMessage =
+    asset.optionsPressure?.status === "OK"
+      ? `${asset.optionsPressure.pressureState} / ${asset.optionsPressure.trendImpact}`
+      : "Options pressure unavailable. Using flow/news/macro confluence only.";
+
+  return (
+    <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Advanced Confluence</p>
+          <h3 className="mt-2 text-xl font-semibold">
+            Trend State: {asset.trendState?.replaceAll("_", " ") ?? confluence?.trendState?.replaceAll("_", " ") ?? "neutral"}
+          </h3>
+          <p className="mt-2 text-sm text-gray-400">
+            Edge Score: {formatScore(asset.edgeScore ?? confluence?.edgeScore)} | News vs Flow: {asset.newsFlowRelationship?.relationship?.replaceAll("_", " ") ?? "--"}
+          </p>
+        </div>
+        <BiasPill bias={confluence?.finalBias ?? asset.bias} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <BiasContributor
+          label="Market Flow"
+          value={asset.flow?.direction ?? "neutral"}
+          helper={`${asset.flow?.strength ?? "flat"} | score ${formatScore(asset.flow?.flowScore)}`}
+        />
+        <BiasContributor
+          label="News vs Flow"
+          value={asset.newsFlowRelationship?.relationship?.replaceAll("_", " ") ?? "insufficient data"}
+          helper={`${formatScore(asset.newsFlowRelationship?.confidence)}% relationship confidence`}
+        />
+        <BiasContributor label="Options Pressure" value={asset.optionsPressure?.status ?? "UNAVAILABLE"} helper={optionsMessage} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="rounded-xl border border-gray-800 bg-[#111827] p-4">
+          <h4 className="text-sm font-semibold text-gray-100">Confluence Breakdown</h4>
+          <div className="mt-3 space-y-2">
+            {(confluence?.components ?? []).map((component) => (
+              <div key={component.key} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-gray-300">{component.label}</span>
+                <span className="text-xs text-gray-500">
+                  {formatScore(component.score)} / {component.weight}
+                </span>
+              </div>
+            ))}
+            {(confluence?.components ?? []).length === 0 ? (
+              <p className="text-sm text-gray-400">No confluence components loaded.</p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-1">
+          <ReasonList title="Watch Reasons" reasons={asset.watchReasons ?? confluence?.watchReasons ?? []} />
+          <ReasonList title="Avoid Reasons" reasons={asset.avoidReasons ?? confluence?.avoidReasons ?? []} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReasonList({ title, reasons }: { title: string; reasons: string[] }) {
+  return (
+    <div className="rounded-xl border border-gray-800 bg-[#111827] p-4">
+      <h4 className="text-sm font-semibold text-gray-100">{title}</h4>
+      <div className="mt-3 space-y-2">
+        {reasons.slice(0, 5).map((reason, index) => (
+          <p key={`${title}-${index}`} className="text-xs leading-5 text-gray-400">{reason}</p>
+        ))}
+        {reasons.length === 0 ? <p className="text-sm text-gray-400">None logged.</p> : null}
+      </div>
     </div>
   );
 }
