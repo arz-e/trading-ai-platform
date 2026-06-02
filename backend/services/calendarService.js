@@ -20,6 +20,8 @@ export async function fetchCalendarBundle() {
     return cachedCalendarBundle;
   }
 
+  let forexFactoryError = null;
+
   try {
     const forexFactoryEvents = await fetchForexFactoryEvents();
 
@@ -32,6 +34,7 @@ export async function fetchCalendarBundle() {
     }
   } catch (err) {
     console.error("ForexFactory calendar fetch failed:", err.message);
+    forexFactoryError = err.message;
 
     if (cachedCalendarBundle) {
       latestCalendarStatus = {
@@ -59,6 +62,9 @@ export async function fetchCalendarBundle() {
     events: manualEvents,
     source: manualCalendarSource,
     status: manualEvents.length > 0 ? "FALLBACK" : "UNAVAILABLE",
+    error: manualEvents.length > 0
+      ? `ForexFactory unavailable, using manual fallback. ${forexFactoryError ?? ""}`.trim()
+      : `Calendar source unavailable. No fallback events loaded.${forexFactoryError ? ` ForexFactory error: ${forexFactoryError}` : ""}`,
   }));
 }
 
@@ -102,7 +108,7 @@ function parseForexFactoryXml(xml) {
     .filter(Boolean);
 }
 
-function buildCalendarBundle({ events, source, status }) {
+function buildCalendarBundle({ events, source, status, error = null }) {
   const normalizedEvents = events
     .map(normalizeCalendarEvent)
     .filter(Boolean)
@@ -115,7 +121,8 @@ function buildCalendarBundle({ events, source, status }) {
     finalStatus,
     normalizedEvents.length,
     upcomingCount,
-    source
+    source,
+    error
   );
 
   return {

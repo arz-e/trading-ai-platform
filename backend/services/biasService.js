@@ -1,4 +1,8 @@
-import { assetRules } from "../config/constants.js";
+import {
+  assetRelevanceRules,
+  assetRules,
+  impactCategoryRules,
+} from "../config/constants.js";
 import { computeEventRisk } from "./calendarService.js";
 import { detectMacroRegime } from "./regimeService.js";
 import {
@@ -83,35 +87,64 @@ function buildNewsBias(asset, news = []) {
   const rules = assetRules[asset] ?? { positive: [], negative: [] };
   let score = 0;
   let hitCount = 0;
+  let weightedHitCount = 0;
   const matchedHeadlines = [];
   const reasons = [];
 
   for (const item of news) {
     const text = `${item.title} ${item.contentSnippet}`.toLowerCase();
     const headlineMatches = [];
+    const sourceWeight = resolveNewsSourceWeight(item.source);
+    const categoryMatch = resolveNewsCategoryMatch(text);
+    const categoryWeight = resolveNewsCategoryWeight(categoryMatch?.category, asset);
+    const assetRelevanceWeight = resolveAssetRelevanceWeight(asset, text);
 
     for (const word of rules.positive) {
       if (containsKeyword(text, word)) {
-        score += 1;
+        const contribution = roundNewsScore(
+          1 * sourceWeight * categoryWeight * assetRelevanceWeight
+        );
+        score = roundNewsScore(score + contribution);
         hitCount++;
-        headlineMatches.push({ keyword: word, direction: "positive" });
-        reasons.push({
-          text: `positive headline signal: "${word}"`,
+        weightedHitCount = roundNewsScore(weightedHitCount + Math.abs(contribution));
+        headlineMatches.push({
+          keyword: word,
           direction: "positive",
-          weight: 1,
+          sourceWeight,
+          category: categoryMatch?.category ?? "GENERAL",
+          categoryWeight,
+          assetRelevanceWeight,
+          contribution,
+        });
+        reasons.push({
+          text: `positive weighted headline signal: "${word}"`,
+          direction: "positive",
+          weight: Math.abs(contribution),
         });
       }
     }
 
     for (const word of rules.negative) {
       if (containsKeyword(text, word)) {
-        score -= 1;
+        const contribution = roundNewsScore(
+          -1 * sourceWeight * categoryWeight * assetRelevanceWeight
+        );
+        score = roundNewsScore(score + contribution);
         hitCount++;
-        headlineMatches.push({ keyword: word, direction: "negative" });
-        reasons.push({
-          text: `negative headline signal: "${word}"`,
+        weightedHitCount = roundNewsScore(weightedHitCount + Math.abs(contribution));
+        headlineMatches.push({
+          keyword: word,
           direction: "negative",
-          weight: 1,
+          sourceWeight,
+          category: categoryMatch?.category ?? "GENERAL",
+          categoryWeight,
+          assetRelevanceWeight,
+          contribution,
+        });
+        reasons.push({
+          text: `negative weighted headline signal: "${word}"`,
+          direction: "negative",
+          weight: Math.abs(contribution),
         });
       }
     }
@@ -122,6 +155,10 @@ function buildNewsBias(asset, news = []) {
         source: item.source,
         pubDate: item.pubDate,
         link: item.link,
+        sourceWeight,
+        category: categoryMatch?.category ?? "GENERAL",
+        categoryWeight,
+        assetRelevanceWeight,
         matches: headlineMatches,
       });
     }
@@ -129,12 +166,69 @@ function buildNewsBias(asset, news = []) {
 
   return {
     bias: scoreToBias(score),
-    confidence: scoreToConfidence(score, hitCount),
+    confidence: scoreToConfidence(score, weightedHitCount),
     score,
     hitCount,
+    weightedHitCount,
     matchedHeadlines,
     reasons,
   };
+}
+
+function resolveNewsSourceWeight(source) {
+  const value = String(source ?? "");
+
+  if (/reuters|bloomberg|cnbc|financial times|ft\.com|wall street journal|wsj|marketwatch|federal reserve|fed/i.test(value)) {
+    return 1;
+  }
+
+  if (/yahoo|investing\.com|trading economics|marketpulse/i.test(value)) {
+    return 0.6;
+  }
+
+  return 0.3;
+}
+
+function resolveNewsCategoryMatch(text) {
+  return impactCategoryRules.find((rule) =>
+    rule.keywords.some((keyword) => containsKeyword(text, keyword))
+  );
+}
+
+function resolveNewsCategoryWeight(category = "GENERAL", asset) {
+  const highImpact = [
+    "CENTRAL_BANK",
+    "INFLATION",
+    "LABOR",
+    "GEOPOLITICS",
+    "TRADE_POLICY",
+    "ENERGY",
+    "BANKING_STRESS",
+  ];
+
+  if (category === "EARNINGS") {
+    return asset === "NQ" ? 0.75 : 0.45;
+  }
+
+  if (category === "ENERGY") {
+    return asset === "USOIL" ? 1.35 : 1.1;
+  }
+
+  if (highImpact.includes(category)) {
+    return 1.25;
+  }
+
+  return 0.55;
+}
+
+function resolveAssetRelevanceWeight(asset, text) {
+  const relevance = assetRelevanceRules[asset] ?? [];
+  const matched = relevance.some((keyword) => containsKeyword(text, keyword));
+  return matched ? 1 : 0.65;
+}
+
+function roundNewsScore(value) {
+  return Number(Number(value).toFixed(2));
 }
 
 function buildTechnicalBias(asset, market = {}, regime = {}) {
