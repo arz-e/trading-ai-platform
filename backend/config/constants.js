@@ -1,4 +1,4 @@
-export const PORT = 5000;
+export const PORT = Number(process.env.PORT ?? 5000);
 
 export const symbols = {
   ES: "ES=F",

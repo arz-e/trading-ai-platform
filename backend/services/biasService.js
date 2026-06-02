@@ -234,42 +234,149 @@ function roundNewsScore(value) {
 function buildTechnicalBias(asset, market = {}, regime = {}) {
   let score = 0;
   const reasons = [];
+  const components = [];
   const assetMove = market[asset]?.percent ?? 0;
   const esMove = market.ES?.percent ?? 0;
   const nqMove = market.NQ?.percent ?? 0;
+  const ymMove = market.YM?.percent ?? 0;
   const dxyMove = market.DXY?.percent ?? 0;
   const oilMove = market.USOIL?.percent ?? 0;
   const goldMove = market.GOLD?.percent ?? 0;
   const vixMove = market.VIX?.percent ?? 0;
   const us10yMove = market.US10Y?.percent ?? 0;
+  const context = buildTechnicalContext({
+    asset,
+    market,
+    regime,
+    snapshot: {
+      assetPercent: assetMove,
+      ES: esMove,
+      NQ: nqMove,
+      YM: ymMove,
+      DXY: dxyMove,
+      USOIL: oilMove,
+      GOLD: goldMove,
+      VIX: vixMove,
+      US10Y: us10yMove,
+    },
+  });
 
-  if (assetMove >= 0.35) addTechnicalScore(1, "asset intraday momentum is positive", "positive");
-  if (assetMove <= -0.35) addTechnicalScore(-1, "asset intraday momentum is negative", "negative");
+  if (assetMove >= 0.35) {
+    addTechnicalScore(1, "asset intraday momentum is positive", "positive", {
+      key: "asset_momentum_positive",
+      label: `${asset} positive intraday momentum`,
+      rawValue: assetMove,
+      threshold: ">= 0.35%",
+    });
+  }
+  if (assetMove <= -0.35) {
+    addTechnicalScore(-1, "asset intraday momentum is negative", "negative", {
+      key: "asset_momentum_negative",
+      label: `${asset} negative intraday momentum`,
+      rawValue: assetMove,
+      threshold: "<= -0.35%",
+    });
+  }
 
   if (asset === "ES" || asset === "NQ" || asset === "YM") {
-    if (vixMove > 2) addTechnicalScore(-1, "rising VIX pressures equity risk", "negative");
-    if (dxyMove > 0.25) addTechnicalScore(-1, "dollar momentum is a headwind for equities", "negative");
-    if (oilMove > 1) addTechnicalScore(-1, "oil shock adds inflation pressure to equities", "negative");
-    if (esMove > 0.35 && nqMove > 0.45) addTechnicalScore(1, "broad equity futures momentum is positive", "positive");
+    if (vixMove > 2) {
+      addTechnicalScore(-1, "rising VIX pressures equity risk", "negative", {
+        key: "equity_vix_pressure",
+        label: "VIX risk pressure",
+        rawValue: vixMove,
+        threshold: "> 2%",
+      });
+    }
+    if (dxyMove > 0.25) {
+      addTechnicalScore(-1, "dollar momentum is a headwind for equities", "negative", {
+        key: "equity_dxy_headwind",
+        label: "Dollar headwind",
+        rawValue: dxyMove,
+        threshold: "> 0.25%",
+      });
+    }
+    if (oilMove > 1) {
+      addTechnicalScore(-1, "oil shock adds inflation pressure to equities", "negative", {
+        key: "equity_oil_inflation_pressure",
+        label: "Oil inflation pressure",
+        rawValue: oilMove,
+        threshold: "> 1%",
+      });
+    }
+    if (esMove > 0.35 && nqMove > 0.45) {
+      addTechnicalScore(1, "broad equity futures momentum is positive", "positive", {
+        key: "equity_broad_momentum_positive",
+        label: "ES/NQ aligned positive momentum",
+        rawValue: { ES: esMove, NQ: nqMove, YM: ymMove },
+        threshold: "ES > 0.35% and NQ > 0.45%",
+      });
+    }
   }
 
   if (asset === "NQ" && us10yMove > 0.8) {
-    addTechnicalScore(-1, "rising yields pressure long-duration tech", "negative");
+    addTechnicalScore(-1, "rising yields pressure long-duration tech", "negative", {
+      key: "nq_yield_pressure",
+      label: "US10Y tech duration pressure",
+      rawValue: us10yMove,
+      threshold: "> 0.8%",
+    });
   }
 
   if (asset === "GOLD") {
-    if (dxyMove > 0.25) addTechnicalScore(-1, "stronger dollar limits upside for gold", "negative");
-    if (vixMove > 2 || esMove < -0.4) addTechnicalScore(1, "defensive rotation supports gold", "positive");
+    if (dxyMove > 0.25) {
+      addTechnicalScore(-1, "stronger dollar limits upside for gold", "negative", {
+        key: "gold_dxy_headwind",
+        label: "Dollar headwind for gold",
+        rawValue: dxyMove,
+        threshold: "> 0.25%",
+      });
+    }
+    if (vixMove > 2 || esMove < -0.4) {
+      addTechnicalScore(1, "defensive rotation supports gold", "positive", {
+        key: "gold_defensive_rotation",
+        label: "Defensive rotation",
+        rawValue: { VIX: vixMove, ES: esMove },
+        threshold: "VIX > 2% or ES < -0.4%",
+      });
+    }
   }
 
   if (asset === "DXY") {
-    if (us10yMove > 0.6) addTechnicalScore(1, "higher US10Y supports dollar strength", "positive");
-    if (vixMove > 2) addTechnicalScore(1, "risk-off tape supports dollar demand", "positive");
+    if (us10yMove > 0.6) {
+      addTechnicalScore(1, "higher US10Y supports dollar strength", "positive", {
+        key: "dxy_yield_support",
+        label: "US10Y dollar support",
+        rawValue: us10yMove,
+        threshold: "> 0.6%",
+      });
+    }
+    if (vixMove > 2) {
+      addTechnicalScore(1, "risk-off tape supports dollar demand", "positive", {
+        key: "dxy_risk_off_support",
+        label: "Risk-off dollar demand",
+        rawValue: vixMove,
+        threshold: "> 2%",
+      });
+    }
   }
 
   if (asset === "USOIL") {
-    if (oilMove > 0.75) addTechnicalScore(1, "oil momentum is positive", "positive");
-    if (esMove < -0.5 && nqMove < -0.7) addTechnicalScore(-1, "equity stress points to demand risk for oil", "negative");
+    if (oilMove > 0.75) {
+      addTechnicalScore(1, "oil momentum is positive", "positive", {
+        key: "oil_momentum_positive",
+        label: "Oil positive momentum",
+        rawValue: oilMove,
+        threshold: "> 0.75%",
+      });
+    }
+    if (esMove < -0.5 && nqMove < -0.7) {
+      addTechnicalScore(-1, "equity stress points to demand risk for oil", "negative", {
+        key: "oil_equity_demand_risk",
+        label: "Equity stress demand risk",
+        rawValue: { ES: esMove, NQ: nqMove },
+        threshold: "ES < -0.5% and NQ < -0.7%",
+      });
+    }
   }
 
   if (regime.regime && regime.regime !== "MIXED") {
@@ -278,7 +385,13 @@ function buildTechnicalBias(asset, market = {}, regime = {}) {
       addTechnicalScore(
         regimeAdjustment,
         `macro regime adjustment (${regime.regime})`,
-        regimeAdjustment > 0 ? "positive" : "negative"
+        regimeAdjustment > 0 ? "positive" : "negative",
+        {
+          key: "macro_regime_adjustment",
+          label: `Macro regime ${regime.regime}`,
+          rawValue: regime.regime,
+          threshold: "regime-adjustment matrix",
+        }
       );
     }
   }
@@ -288,10 +401,13 @@ function buildTechnicalBias(asset, market = {}, regime = {}) {
     confidence: scoreToConfidence(score, reasons.length),
     score,
     reasons,
+    components,
+    context,
     snapshot: {
       assetPercent: assetMove,
       ES: esMove,
       NQ: nqMove,
+      YM: ymMove,
       DXY: dxyMove,
       USOIL: oilMove,
       GOLD: goldMove,
@@ -300,10 +416,84 @@ function buildTechnicalBias(asset, market = {}, regime = {}) {
     },
   };
 
-  function addTechnicalScore(delta, text, direction) {
+  function addTechnicalScore(delta, text, direction, component = {}) {
     score += delta;
     reasons.push({ text, direction, weight: Math.abs(delta) });
+    components.push({
+      key: component.key ?? text.toLowerCase().replaceAll(" ", "_"),
+      label: component.label ?? text,
+      direction,
+      weight: Math.abs(delta),
+      contribution: delta,
+      rawValue: component.rawValue ?? null,
+      threshold: component.threshold ?? null,
+      explanation: text,
+    });
   }
+}
+
+function buildTechnicalContext({ asset, market = {}, regime = {}, snapshot = {} }) {
+  const equityMoves = {
+    ES: snapshot.ES ?? 0,
+    NQ: snapshot.NQ ?? 0,
+    YM: snapshot.YM ?? 0,
+  };
+  const alignedEquityDirection = resolveAlignedDirection(Object.values(equityMoves));
+
+  return {
+    asset,
+    macroRegime: regime.regime ?? "MIXED",
+    regimeConfidence: regime.confidence ?? null,
+    snapshot,
+    assetMomentum: classifyMove(snapshot.assetPercent),
+    equityAlignment: {
+      ...equityMoves,
+      direction: alignedEquityDirection,
+      note: "ES, NQ, and YM usually share direction, but divergence is preserved for review.",
+    },
+    riskInputs: {
+      vixPressure: classifyMove(snapshot.VIX, 2),
+      dollarPressure: classifyMove(snapshot.DXY, 0.25),
+      ratesPressure: classifyMove(snapshot.US10Y, 0.6),
+      oilShock: classifyMove(snapshot.USOIL, 1),
+      goldContext: classifyMove(snapshot.GOLD, 0.35),
+    },
+    staleFlags: Object.fromEntries(
+      Object.entries(market).map(([symbol, row]) => [symbol, buildMarketDataFlags(row)])
+    ),
+  };
+}
+
+function resolveAlignedDirection(values = []) {
+  const positives = values.filter((value) => value > 0).length;
+  const negatives = values.filter((value) => value < 0).length;
+
+  if (positives >= 2) return "positive";
+  if (negatives >= 2) return "negative";
+  return "mixed";
+}
+
+function classifyMove(value = 0, threshold = 0.35) {
+  if (value >= threshold) return "positive";
+  if (value <= -threshold) return "negative";
+  return "neutral";
+}
+
+function buildMarketDataFlags(row = {}) {
+  const timestamp = row.timestamp ? new Date(row.timestamp) : null;
+  const ageMinutes =
+    timestamp && Number.isFinite(timestamp.getTime())
+      ? Math.round((Date.now() - timestamp.getTime()) / 60000)
+      : null;
+
+  return {
+    missingPrice: typeof row.price !== "number",
+    missingPercent: typeof row.percent !== "number",
+    malformedTimestamp: Boolean(row.timestamp) && !Number.isFinite(timestamp?.getTime()),
+    staleTimestamp: typeof ageMinutes === "number" ? ageMinutes > 30 : true,
+    ageMinutes,
+    sourceTimestamp: row.timestamp ?? null,
+  };
 }
 
 function combineBiasSignals({ asset, newsBias, technicalBias, market, regime, eventRisk }) {

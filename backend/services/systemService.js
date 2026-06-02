@@ -2,6 +2,7 @@ import { dashboardAssets, symbols } from "../config/constants.js";
 import { getSystemStats } from "./dbService.js";
 import { getCalendarSourceStatus } from "./calendarService.js";
 import { getNewsSourceStatus } from "./newsService.js";
+import { getWatchlistProviderHealth, getWatchlistStats } from "./watchlistService.js";
 
 /*
   System Service
@@ -15,6 +16,8 @@ import { getNewsSourceStatus } from "./newsService.js";
 
 export async function buildSystemStatus({ startedAt, latestBiasRun }) {
   const dbStats = await getSystemStats();
+  const watchlist = await getWatchlistStats();
+  const watchlistProviders = getWatchlistProviderHealth();
 
   return {
     ok: true,
@@ -38,7 +41,10 @@ export async function buildSystemStatus({ startedAt, latestBiasRun }) {
     dataSources: {
       news: getNewsSourceStatus(),
       calendar: getCalendarSourceStatus(),
+      marketProviders: watchlistProviders,
     },
+
+    watchlist,
 
     latestBiasRun: latestBiasRun || null,
   };
