@@ -36,6 +36,15 @@ import {
   buildPostMortem,
 } from "./services/performanceService.js";
 import { buildSystemStatus } from "./services/systemService.js";
+import { fetchFinnhubQuote, getFinnhubStatus } from "./services/finnhubService.js";
+import {
+  addWatchlistItem,
+  disableWatchlistItem,
+  fetchWatchlistQuotes,
+  getWatchlistItems,
+  searchSymbols,
+  updateWatchlistItem,
+} from "./services/watchlistService.js";
 
 const app = express();
 const startedAt = Date.now();
@@ -76,6 +85,105 @@ app.get("/api/market", async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Failed to fetch market data" });
+  }
+});
+
+app.get("/api/watchlist", async (req, res) => {
+  try {
+    const includeDisabled = String(req.query.includeDisabled ?? "true") !== "false";
+    const items = await getWatchlistItems({ includeDisabled });
+
+    res.json({
+      count: items.length,
+      items,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch watchlist" });
+  }
+});
+
+app.post("/api/watchlist", async (req, res) => {
+  try {
+    const item = await addWatchlistItem(req.body ?? {});
+
+    res.status(201).json({
+      item,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(err.statusCode ?? 500).json({ error: err.message || "Failed to add watchlist item" });
+  }
+});
+
+app.patch("/api/watchlist/:id", async (req, res) => {
+  try {
+    const item = await updateWatchlistItem(req.params.id, req.body ?? {});
+
+    res.json({
+      item,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(err.statusCode ?? 500).json({ error: err.message || "Failed to update watchlist item" });
+  }
+});
+
+app.delete("/api/watchlist/:id", async (req, res) => {
+  try {
+    const item = await disableWatchlistItem(req.params.id);
+
+    res.json({
+      item,
+      disabled: true,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(err.statusCode ?? 500).json({ error: err.message || "Failed to disable watchlist item" });
+  }
+});
+
+app.get("/api/watchlist/quotes", async (req, res) => {
+  try {
+    const quotes = await fetchWatchlistQuotes();
+    res.json(quotes);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch watchlist quotes" });
+  }
+});
+
+app.get("/api/symbol-search", async (req, res) => {
+  try {
+    const query = String(req.query.query ?? "");
+    const type = String(req.query.type ?? "all");
+    const result = await searchSymbols(query, type);
+
+    res.json(result);
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to search symbols" });
+  }
+});
+
+app.get("/api/finnhub/status", (req, res) => {
+  res.json(getFinnhubStatus());
+});
+
+app.get("/api/finnhub/quote/:symbol", async (req, res) => {
+  try {
+    const quote = await fetchFinnhubQuote(req.params.symbol);
+    res.json({
+      ...quote,
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch Finnhub quote" });
   }
 });
 

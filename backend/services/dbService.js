@@ -1,6 +1,11 @@
 import sqlite3 from "sqlite3";
 import fs from "fs";
 import path from "path";
+import {
+  coreWatchlistItems,
+  supportedAssetClasses,
+  supportedProviders,
+} from "../config/providerSymbols.js";
 
 const DB_PATH = "./data/trading_ai.db";
 const DB_DIR = path.dirname(DB_PATH);
@@ -77,6 +82,21 @@ export function initDb() {
     );
   `;
 
+  const createWatchlistTableSql = `
+    CREATE TABLE IF NOT EXISTS watchlist_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      display_name TEXT,
+      asset_class TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      provider_symbol TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `;
+
   db.run(createBiasHistoryTableSql, (err) => {
     if (err) {
       console.error("Failed to create bias_history table:", err.message);
@@ -90,6 +110,17 @@ export function initDb() {
       console.error("Failed to create bias_runs table:", err.message);
     } else {
       console.log("bias_runs table ready");
+    }
+  });
+
+  db.run(createWatchlistTableSql, (err) => {
+    if (err) {
+      console.error("Failed to create watchlist_items table:", err.message);
+    } else {
+      console.log("watchlist_items table ready");
+      seedCoreWatchlistItems().catch((seedErr) => {
+        console.error("Failed to seed core watchlist:", seedErr.message);
+      });
     }
   });
 
@@ -125,6 +156,178 @@ export function initDb() {
   db.run(`ALTER TABLE bias_runs ADD COLUMN formula_components_json TEXT`, () => {});
   db.run(`ALTER TABLE bias_runs ADD COLUMN raw_context_json TEXT`, () => {});
   db.run(`ALTER TABLE bias_runs ADD COLUMN manual_review_notes TEXT`, () => {});
+}
+
+export async function getWatchlistItems({ includeDisabled = true } = {}) {
+  const rows = await allSql(
+    `
+      SELECT
+        id,
+        symbol,
+        display_name AS displayName,
+        asset_class AS assetClass,
+        provider,
+        provider_symbol AS providerSymbol,
+        enabled,
+        sort_order AS sortOrder,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM watchlist_items
+      ${includeDisabled ? "" : "WHERE enabled = 1"}
+      ORDER BY sort_order ASC, id ASC
+    `
+  );
+
+  return rows.map(normalizeWatchlistRow);
+}
+
+export async function addWatchlistItem(input = {}) {
+  const item = normalizeWatchlistInput(input);
+  const existing = await getSql(
+    `
+      SELECT id, enabled
+      FROM watchlist_items
+      WHERE provider = ? AND provider_symbol = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `,
+    [item.provider, item.providerSymbol]
+  );
+
+  if (existing?.enabled) {
+    const error = new Error("Watchlist item already exists");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const now = new Date().toISOString();
+
+  if (existing?.id) {
+    await runSql(
+      `
+        UPDATE watchlist_items
+        SET symbol = ?, display_name = ?, asset_class = ?, enabled = 1,
+            sort_order = ?, updated_at = ?
+        WHERE id = ?
+      `,
+      [
+        item.symbol,
+        item.displayName,
+        item.assetClass,
+        item.sortOrder,
+        now,
+        existing.id,
+      ]
+    );
+
+    return getWatchlistItem(existing.id);
+  }
+
+  const result = await runSql(
+    `
+      INSERT INTO watchlist_items (
+        symbol,
+        display_name,
+        asset_class,
+        provider,
+        provider_symbol,
+        enabled,
+        sort_order,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      item.symbol,
+      item.displayName,
+      item.assetClass,
+      item.provider,
+      item.providerSymbol,
+      item.enabled ? 1 : 0,
+      item.sortOrder,
+      now,
+      now,
+    ]
+  );
+
+  return getWatchlistItem(result.lastID);
+}
+
+export async function updateWatchlistItem(id, input = {}) {
+  const current = await getWatchlistItem(id);
+
+  if (!current) {
+    const error = new Error("Watchlist item not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const next = {
+    ...current,
+    displayName: input.displayName ?? current.displayName,
+    providerSymbol: input.providerSymbol ?? current.providerSymbol,
+    enabled: input.enabled === undefined ? current.enabled : Boolean(input.enabled),
+    sortOrder: input.sortOrder === undefined ? current.sortOrder : Number(input.sortOrder),
+  };
+  const now = new Date().toISOString();
+
+  await runSql(
+    `
+      UPDATE watchlist_items
+      SET display_name = ?, provider_symbol = ?, enabled = ?, sort_order = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    [
+      next.displayName,
+      next.providerSymbol,
+      next.enabled ? 1 : 0,
+      Number.isFinite(next.sortOrder) ? next.sortOrder : current.sortOrder,
+      now,
+      id,
+    ]
+  );
+
+  return getWatchlistItem(id);
+}
+
+export async function disableWatchlistItem(id) {
+  const current = await getWatchlistItem(id);
+
+  if (!current) {
+    const error = new Error("Watchlist item not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  await runSql(
+    `
+      UPDATE watchlist_items
+      SET enabled = 0, updated_at = ?
+      WHERE id = ?
+    `,
+    [new Date().toISOString(), id]
+  );
+
+  return {
+    ...current,
+    enabled: false,
+  };
+}
+
+export async function getWatchlistStats() {
+  const rows = await getWatchlistItems({ includeDisabled: false });
+  const providers = {};
+
+  for (const row of rows) {
+    providers[row.provider] = (providers[row.provider] ?? 0) + 1;
+  }
+
+  return {
+    enabledCount: rows.length,
+    providers,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function logBiasRun({
@@ -543,6 +746,111 @@ function runSql(sql, params = []) {
   });
 }
 
+function getSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(row);
+    });
+  });
+}
+
+function allSql(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      resolve(rows);
+    });
+  });
+}
+
+async function seedCoreWatchlistItems() {
+  const row = await getSql(`SELECT COUNT(*) AS count FROM watchlist_items`);
+
+  if ((row?.count ?? 0) > 0) {
+    return;
+  }
+
+  for (const item of coreWatchlistItems) {
+    await addWatchlistItem(item);
+  }
+}
+
+async function getWatchlistItem(id) {
+  const row = await getSql(
+    `
+      SELECT
+        id,
+        symbol,
+        display_name AS displayName,
+        asset_class AS assetClass,
+        provider,
+        provider_symbol AS providerSymbol,
+        enabled,
+        sort_order AS sortOrder,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM watchlist_items
+      WHERE id = ?
+    `,
+    [id]
+  );
+
+  return row ? normalizeWatchlistRow(row) : null;
+}
+
+function normalizeWatchlistInput(input = {}) {
+  const symbol = String(input.symbol ?? "").trim().toUpperCase();
+  const displayName = String(input.displayName ?? input.symbol ?? "").trim();
+  const assetClass = String(input.assetClass ?? "").trim().toLowerCase();
+  const provider = String(input.provider ?? "").trim().toLowerCase();
+  const providerSymbol = String(input.providerSymbol ?? "").trim();
+
+  if (!symbol || !assetClass || !provider || !providerSymbol) {
+    const error = new Error("symbol, assetClass, provider, and providerSymbol are required");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!supportedAssetClasses.has(assetClass)) {
+    const error = new Error("Unsupported assetClass");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!supportedProviders.has(provider)) {
+    const error = new Error("Unsupported provider");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    symbol,
+    displayName,
+    assetClass,
+    provider,
+    providerSymbol,
+    enabled: input.enabled === undefined ? true : Boolean(input.enabled),
+    sortOrder: Number.isFinite(Number(input.sortOrder)) ? Number(input.sortOrder) : 100,
+  };
+}
+
+function normalizeWatchlistRow(row = {}) {
+  return {
+    ...row,
+    enabled: Boolean(row.enabled),
+    sortOrder: row.sortOrder ?? 0,
+  };
+}
+
 function buildFormulaComponents(biasOutput = {}, regimeData = null, eventRisk = null) {
   return Object.fromEntries(
     Object.entries(biasOutput).map(([asset, row]) => [
@@ -588,6 +896,9 @@ function buildAssetFormulaComponents({
       macroRegime: regimeData?.regime ?? row.regime ?? null,
       regimeConfidence: regimeData?.confidence ?? row.regimeConfidence ?? null,
     },
+    technicalComponents: row.technicalBias?.components ?? [],
+    technicalContext: row.technicalBias?.context ?? null,
+    newsComponents: row.newsBias?.matchedHeadlines ?? [],
     formulas: {
       combinedBias: "scoreToBias(newsScore + technicalScore + crossAssetConfluence)",
       confidence:

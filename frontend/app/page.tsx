@@ -36,6 +36,17 @@ type BiasBreakdown = {
   }>;
   reasons?: Array<{ text: string; direction: string; weight: number }>;
   snapshot?: Record<string, number>;
+  components?: Array<{
+    key: string;
+    label: string;
+    direction: string;
+    weight: number;
+    contribution: number;
+    rawValue?: unknown;
+    threshold?: string | null;
+    explanation?: string;
+  }>;
+  context?: Record<string, unknown> | null;
 };
 
 type AssetCard = {
@@ -203,6 +214,15 @@ type SystemStatus = {
   dataSources?: {
     news?: SourceStatus[];
     calendar?: SourceStatus;
+    marketProviders?: Record<string, SourceStatus & {
+      configured?: boolean;
+      available?: boolean;
+    }>;
+  };
+  watchlist?: {
+    enabledCount: number;
+    providers: Record<string, number>;
+    generatedAt: string;
   };
   latestBiasRun?: {
     runId?: number;
@@ -212,6 +232,82 @@ type SystemStatus = {
     assetCount?: number;
     runType?: string;
   } | null;
+};
+
+type WatchlistItem = {
+  id: number;
+  symbol: string;
+  displayName?: string;
+  assetClass: string;
+  provider: string;
+  providerSymbol: string;
+  enabled: boolean;
+  sortOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type WatchlistQuote = WatchlistItem & {
+  price: number | null;
+  change: number | null;
+  percent: number | null;
+  high?: number | null;
+  low?: number | null;
+  open?: number | null;
+  previousClose?: number | null;
+  dayRange?: string | null;
+  timestamp?: string;
+  status: string;
+  quoteStatus?: string;
+  error?: string | null;
+  raw?: Record<string, unknown>;
+};
+
+type WatchlistResponse = {
+  count: number;
+  items: WatchlistItem[];
+  generatedAt: string;
+};
+
+type WatchlistQuotesResponse = {
+  count: number;
+  quotes: WatchlistQuote[];
+  generatedAt: string;
+};
+
+type SymbolSearchResult = {
+  symbol: string;
+  displayName: string;
+  assetClass: string;
+  provider: string;
+  providerSymbol: string;
+};
+
+type SymbolSearchResponse = {
+  query: string;
+  type: string;
+  results: SymbolSearchResult[];
+  providerStatus?: Record<string, { status?: string; error?: string | null }>;
+  generatedAt: string;
+};
+
+type GroupedAsset = AssetCard & {
+  symbol: string;
+  name: string;
+  changePercent: number | null;
+  quoteStatus?: string;
+  isCustom: boolean;
+  hasBiasData: boolean;
+  provider?: string;
+  providerSymbol?: string;
+  assetClass?: string;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  previousClose?: number | null;
+  dayRange?: string | null;
+  quoteTimestamp?: string;
+  quoteError?: string | null;
 };
 
 type CalendarEvent = {
@@ -359,6 +455,13 @@ export default function Home() {
   const [evaluations, setEvaluations] = useState<EvaluationsResponse | null>(null);
   const [overallEvaluations, setOverallEvaluations] = useState<EvaluationsResponse | null>(null);
   const [postMortem, setPostMortem] = useState<PostMortemResponse["postMortem"] | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [watchlistQuotes, setWatchlistQuotes] = useState<WatchlistQuote[]>([]);
+  const [watchlistLoading, setWatchlistLoading] = useState(false);
+  const [symbolQuery, setSymbolQuery] = useState("");
+  const [symbolResults, setSymbolResults] = useState<SymbolSearchResult[]>([]);
+  const [symbolSearchLoading, setSymbolSearchLoading] = useState(false);
+  const [watchlistMessage, setWatchlistMessage] = useState("");
   const [activeView, setActiveView] = useState<AppView>("dashboard");
   const [menuOpen, setMenuOpen] = useState(false);
   const [selected, setSelected] = useState("NQ");
@@ -377,6 +480,7 @@ export default function Home() {
   }>({ state: "idle", message: "" });
   const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<Date>(new Date());
+  const symbolSearchRequestId = useRef(0);
 
   async function fetchDashboard() {
     const res = await fetch(`${API_BASE_URL}/api/dashboard`, { cache: "no-store" });
@@ -408,6 +512,88 @@ export default function Home() {
     setSystemStatus(data);
   }
 
+  async function fetchWatchlist() {
+    const res = await fetch(`${API_BASE_URL}/api/watchlist`, { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to fetch watchlist");
+    const data: WatchlistResponse = await res.json();
+    setWatchlist(data.items ?? []);
+  }
+
+  async function fetchWatchlistQuotes() {
+    setWatchlistLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/watchlist/quotes`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to fetch watchlist quotes");
+      const data: WatchlistQuotesResponse = await res.json();
+      setWatchlistQuotes(data.quotes ?? []);
+    } finally {
+      setWatchlistLoading(false);
+    }
+  }
+
+  const performSymbolSearch = useCallback(async (value: string) => {
+    const query = value.trim();
+    const requestId = symbolSearchRequestId.current + 1;
+    symbolSearchRequestId.current = requestId;
+
+    if (!query) {
+      setSymbolResults([]);
+      setWatchlistMessage("");
+      setSymbolSearchLoading(false);
+      return;
+    }
+
+    setSymbolSearchLoading(true);
+    setWatchlistMessage("");
+
+    try {
+      const params = new URLSearchParams({ query });
+      const res = await fetch(`${API_BASE_URL}/api/symbol-search?${params.toString()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Failed to search symbols");
+      const data: SymbolSearchResponse = await res.json();
+      if (requestId !== symbolSearchRequestId.current) return;
+      setSymbolResults(data.results ?? []);
+      const finnhubError = data.providerStatus?.finnhub?.error;
+      if ((data.results ?? []).length === 0 && finnhubError) {
+        setWatchlistMessage(finnhubError);
+      }
+    } catch (err) {
+      if (requestId !== symbolSearchRequestId.current) return;
+      console.error(err);
+      setWatchlistMessage("Could not search symbols. Check backend provider status.");
+    } finally {
+      if (requestId === symbolSearchRequestId.current) {
+        setSymbolSearchLoading(false);
+      }
+    }
+  }, []);
+
+  async function searchWatchlistSymbols() {
+    await performSymbolSearch(symbolQuery);
+  }
+
+  async function addSymbolToWatchlist(result: SymbolSearchResult) {
+    setWatchlistMessage("Adding symbol...");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/watchlist`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(result),
+      });
+      const data: { item?: WatchlistItem; error?: string } = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to add symbol");
+      setWatchlistMessage(`Added ${data.item?.symbol ?? result.symbol} to watchlist.`);
+      setSymbolResults([]);
+      await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
+    } catch (err) {
+      console.error(err);
+      setWatchlistMessage(err instanceof Error ? err.message : "Could not add symbol.");
+    }
+  }
+
   async function logCurrentBiasRun() {
     setLogStatus({
       state: "saving",
@@ -433,7 +619,7 @@ export default function Home() {
       await Promise.all([
         fetchSystemStatus(),
         fetchBiasShifts(),
-        fetchHistory(selected),
+        assetOrder.includes(selected) ? fetchHistory(selected) : Promise.resolve(),
         activeView === "evaluations" ? fetchEvaluationsData() : Promise.resolve(),
       ]);
     } catch (err) {
@@ -510,7 +696,13 @@ export default function Home() {
   useEffect(() => {
     async function boot() {
       try {
-        await Promise.all([fetchDashboard(), fetchBiasShifts(), fetchSystemStatus()]);
+        await Promise.all([
+          fetchDashboard(),
+          fetchBiasShifts(),
+          fetchSystemStatus(),
+          fetchWatchlist(),
+          fetchWatchlistQuotes(),
+        ]);
       } catch (err) {
         console.error(err);
       } finally {
@@ -524,13 +716,18 @@ export default function Home() {
       fetchDashboard().catch(console.error);
       fetchBiasShifts().catch(console.error);
       fetchSystemStatus().catch(console.error);
+      fetchWatchlistQuotes().catch(console.error);
     }, 15000);
 
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
-    fetchHistory(selected).catch(console.error);
+    if (assetOrder.includes(selected)) {
+      fetchHistory(selected).catch(console.error);
+    } else {
+      setHistorySummary(null);
+    }
   }, [selected]);
 
   useEffect(() => {
@@ -554,6 +751,24 @@ export default function Home() {
   }, [activeView, selectedEvaluationId]);
 
   useEffect(() => {
+    const query = symbolQuery.trim();
+
+    if (!query) {
+      symbolSearchRequestId.current += 1;
+      setSymbolResults([]);
+      setWatchlistMessage("");
+      setSymbolSearchLoading(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      performSymbolSearch(query).catch(console.error);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [performSymbolSearch, symbolQuery]);
+
+  useEffect(() => {
     setMounted(true);
 
     const timer = setInterval(() => {
@@ -570,12 +785,17 @@ export default function Home() {
     );
   }, [dashboard]);
 
-  const selectedAsset = assets.find((a) => a.asset === selected) ?? null;
+  const groupedAssets = useMemo(
+    () => buildGroupedAssets(assets, watchlistQuotes),
+    [assets, watchlistQuotes]
+  );
+  const selectedAsset = groupedAssets.find((a) => a.symbol === selected) ?? groupedAssets[0] ?? null;
   const sessions = mounted ? getSessionInfos(now) : [];
 
   function getBiasColor(value?: string) {
     if (value === "Bullish") return "text-green-400 bg-green-900/30 border-green-700";
     if (value === "Bearish") return "text-red-400 bg-red-900/30 border-red-700";
+    if (value === "N/A") return "text-gray-300 bg-gray-800 border-gray-700";
     return "text-yellow-300 bg-yellow-900/20 border-yellow-700";
   }
 
@@ -720,7 +940,7 @@ export default function Home() {
               {dashboard?.regime?.regime?.replaceAll("_", " ") ?? "--"}
             </h2>
             <p className="mt-2 text-sm text-gray-400">
-              Confidence: {dashboard?.regime?.confidence ?? "--"}%
+              Confidence: {formatScoreOrDash(dashboard?.regime?.confidence)}%
             </p>
           </div>
 
@@ -854,7 +1074,7 @@ export default function Home() {
                       >
                         {item.impactLabel}
                       </span>
-                      <span className="text-xs text-gray-400">Impact {item.impactScore}</span>
+                      <span className="text-xs text-gray-400">Impact {formatScore(item.impactScore)}</span>
                     </div>
                   </div>
                 </div>
@@ -869,36 +1089,49 @@ export default function Home() {
           <div className="rounded-2xl border border-gray-800 bg-[#111827] p-6">Loading...</div>
         ) : (
           <>
+            <WatchlistSearchBar
+              watchlist={watchlist}
+              loading={watchlistLoading}
+              symbolQuery={symbolQuery}
+              symbolResults={symbolResults}
+              searchLoading={symbolSearchLoading}
+              message={watchlistMessage}
+              onQueryChange={setSymbolQuery}
+              onSearch={searchWatchlistSymbols}
+              onAdd={addSymbolToWatchlist}
+              onRefresh={fetchWatchlistQuotes}
+            />
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {assets.map((item) => (
+              {groupedAssets.map((item) => (
                 <button
-                  key={item.asset}
-                  onClick={() => setSelected(item.asset)}
+                  key={item.symbol}
+                  onClick={() => setSelected(item.symbol)}
                   className={`rounded-2xl border p-5 text-left shadow-lg transition ${
-                    selected === item.asset
+                    selected === item.symbol
                       ? "border-cyan-500 bg-[#131c2f]"
                       : "border-gray-800 bg-[#111827] hover:bg-[#141b2b]"
                   }`}
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.2em] text-gray-400">
-                        {item.asset}
+                      <p className={`text-xs uppercase text-gray-400 ${item.isCustom ? "tracking-normal" : "tracking-[0.2em]"}`}>
+                        {item.symbol}
                       </p>
-                      <h2 className="mt-2 text-lg font-semibold">{labelMap[item.asset] || item.asset}</h2>
+                      <h2 className="mt-2 text-lg font-semibold">{item.name}</h2>
                     </div>
                     <span
                       className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getBiasColor(
-                        item.bias
+                        item.hasBiasData ? item.bias : "N/A"
                       )}`}
                     >
-                      {item.bias}
+                      {item.hasBiasData ? item.bias : "Quote only"}
                     </span>
                   </div>
 
                   <div className="mt-5">
                     <p className="text-3xl font-bold">
-                      {typeof item.price === "number" ? item.price.toLocaleString() : "N/A"}
+                      {formatQuoteValue(item.price)}
                     </p>
                     <p className={`mt-2 text-sm font-medium ${getChangeColor(item.change)}`}>
                       {typeof item.change === "number"
@@ -911,19 +1144,23 @@ export default function Home() {
 
                   <div className="mt-4 flex items-center justify-between">
                     <span className="text-sm text-gray-400">Confidence</span>
-                    <span className="text-sm font-semibold">{item.confidence}%</span>
+                    <span className="text-sm font-semibold">
+                      {item.hasBiasData ? `${formatScore(item.confidence)}%` : "N/A"}
+                    </span>
                   </div>
 
                   <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-[#1f2937]">
                     <div
                       className="h-full bg-cyan-300"
-                      style={{ width: `${item.confidence}%` }}
+                      style={{ width: `${item.hasBiasData ? item.confidence : 0}%` }}
                     />
                   </div>
 
                   <div className="mt-4 flex items-center justify-between text-sm">
                     <span className="text-gray-400">Expected Move</span>
-                    <span className={getChangeColor(item.movePoints)}>{item.movePoints}</span>
+                    <span className={item.hasBiasData ? getChangeColor(item.movePoints) : "text-gray-400"}>
+                      {formatExpectedMoveValue(item)}
+                    </span>
                   </div>
                 </button>
               ))}
@@ -933,32 +1170,36 @@ export default function Home() {
               <div className="xl:col-span-7 rounded-2xl border border-gray-800 bg-[#111827] p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-400">{labelMap[selected] || selected}</p>
-                    <h2 className="mt-1 text-3xl font-bold">{selected}</h2>
+                    <p className="text-sm text-gray-400">{selectedAsset?.name ?? labelMap[selected] ?? selected}</p>
+                    <h2 className="mt-1 text-3xl font-bold">{selectedAsset?.symbol ?? selected}</h2>
                   </div>
 
                   <div
                     className={`rounded-xl border px-4 py-2 text-sm font-semibold ${getBiasColor(
-                      selectedAsset?.bias
+                      selectedAsset?.hasBiasData ? selectedAsset?.bias : "N/A"
                     )}`}
                   >
-                    {selectedAsset?.bias || "No Bias"}
+                    {selectedAsset?.hasBiasData ? selectedAsset.bias : "N/A"}
                   </div>
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
                     <p className="text-sm text-gray-400">Confidence</p>
-                    <p className="mt-2 text-3xl font-bold">{selectedAsset?.confidence ?? "--"}%</p>
+                    <p className="mt-2 text-3xl font-bold">
+                      {selectedAsset?.hasBiasData ? `${formatScore(selectedAsset.confidence)}%` : "N/A"}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
                     <p className="text-sm text-gray-400">Score</p>
-                    <p className="mt-2 text-3xl font-bold">{selectedAsset?.score ?? "--"}</p>
+                    <p className="mt-2 text-3xl font-bold">
+                      {selectedAsset?.hasBiasData ? formatScore(selectedAsset.score) : "N/A"}
+                    </p>
                   </div>
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
                     <p className="text-sm text-gray-400">Expected Move</p>
-                    <p className={`mt-2 text-3xl font-bold ${getChangeColor(selectedAsset?.movePoints)}`}>
-                      {selectedAsset?.movePoints ?? "--"}
+                    <p className={`mt-2 text-3xl font-bold ${selectedAsset?.hasBiasData ? getChangeColor(selectedAsset?.movePoints) : "text-gray-400"}`}>
+                      {formatExpectedMoveValue(selectedAsset)}
                     </p>
                   </div>
                 </div>
@@ -966,7 +1207,9 @@ export default function Home() {
                 <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
                   <h3 className="text-lg font-semibold text-cyan-300">Bias Analysis</h3>
                   <p className="mt-3 text-base leading-8 text-gray-200">
-                    {selectedAsset?.analysis || "No analysis available."}
+                    {selectedAsset?.hasBiasData
+                      ? selectedAsset.analysis || "No analysis available."
+                      : `${selectedAsset?.symbol ?? selected} is available as a watchlist quote. Full deterministic macro/news/technical bias is unavailable until this symbol is added to backend assetRules and scoring rules.`}
                   </p>
                 </div>
 
@@ -977,6 +1220,12 @@ export default function Home() {
                   topHeadlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
                 />
 
+                {!selectedAsset?.hasBiasData ? (
+                  <QuoteOnlyDetailsPanel asset={selectedAsset} />
+                ) : null}
+
+                {selectedAsset?.hasBiasData ? (
+                  <>
                 <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
                   <h3 className="text-lg font-semibold">History Charts</h3>
                   <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -1013,13 +1262,13 @@ export default function Home() {
                     <div>
                       <p className="text-sm text-gray-400">Confidence Δ</p>
                       <p className="mt-1 text-lg font-semibold">
-                        {historySummary?.latestChange?.confidenceDelta ?? "--"}
+                      {formatScoreOrDash(historySummary?.latestChange?.confidenceDelta)}
                       </p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-400">Score Δ</p>
                       <p className="mt-1 text-lg font-semibold">
-                        {historySummary?.latestChange?.scoreDelta ?? "--"}
+                        {formatScoreOrDash(historySummary?.latestChange?.scoreDelta)}
                       </p>
                     </div>
                   </div>
@@ -1038,6 +1287,8 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+                  </>
+                ) : null}
               </div>
 
               <div className="xl:col-span-5 space-y-4">
@@ -1058,7 +1309,7 @@ export default function Home() {
                               </p>
                             </div>
                             <div className="text-right text-xs opacity-90">
-                              weight {driver.weight}
+                              weight {formatScore(driver.weight)}
                             </div>
                           </div>
 
@@ -1083,7 +1334,9 @@ export default function Home() {
                 </div>
 
                 <div className="rounded-2xl border border-gray-800 bg-[#111827] p-6">
-                  <h3 className="text-lg font-semibold">Top News Impact</h3>
+                  <h3 className="text-lg font-semibold">
+                    {selectedAsset?.hasBiasData ? "Top News Impact" : "Global News Impact"}
+                  </h3>
                   <div className="mt-4 space-y-3">
                     {(dashboard?.newsImpactSummary?.topHeadlines ?? []).slice(0, 5).map((item, i) => (
                       <div
@@ -1092,7 +1345,7 @@ export default function Home() {
                       >
                         <p className="text-sm font-semibold text-gray-100">{item.title}</p>
                         <p className="mt-2 text-xs text-gray-400">
-                          {item.category} · {item.impactLabel} · impact {item.impactScore}
+                          {item.category} · {item.impactLabel} · impact {formatScore(item.impactScore)}
                         </p>
                       </div>
                     ))}
@@ -1292,6 +1545,7 @@ function BiasLoggingCard({
 function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | null }) {
   const newsSources = systemStatus?.dataSources?.news ?? [];
   const calendar = systemStatus?.dataSources?.calendar ?? null;
+  const marketProviders = Object.values(systemStatus?.dataSources?.marketProviders ?? {});
   const degraded = isDataDegraded(systemStatus);
 
   return (
@@ -1315,7 +1569,7 @@ function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | n
         </span>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-4">
         <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold">Database</p>
@@ -1327,6 +1581,35 @@ function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | n
           <p className="mt-1 text-sm text-gray-400">
             Run rows: {systemStatus?.database?.biasRunRows ?? "--"}
           </p>
+        </div>
+
+        <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold">Market Providers</p>
+            <span className="text-xs text-gray-400">
+              {systemStatus?.watchlist?.enabledCount ?? "--"} symbols
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {marketProviders.length > 0 ? (
+              marketProviders.map((source) => (
+                <div
+                  key={source.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#111827] px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm text-gray-200">{source.name}</p>
+                    <p className="text-xs text-gray-500">
+                      {source.configured === false ? "No API key configured" : `Checked: ${formatHealthTime(source.checkedAt)}`}
+                    </p>
+                  </div>
+                  <StatusPill status={source.status} />
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-gray-400">No provider health loaded.</p>
+            )}
+          </div>
         </div>
 
         <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
@@ -1379,6 +1662,102 @@ function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | n
   );
 }
 
+function WatchlistSearchBar({
+  watchlist,
+  loading,
+  symbolQuery,
+  symbolResults,
+  searchLoading,
+  message,
+  onQueryChange,
+  onSearch,
+  onAdd,
+  onRefresh,
+}: {
+  watchlist: WatchlistItem[];
+  loading: boolean;
+  symbolQuery: string;
+  symbolResults: SymbolSearchResult[];
+  searchLoading: boolean;
+  message: string;
+  onQueryChange: (value: string) => void;
+  onSearch: () => void;
+  onAdd: (result: SymbolSearchResult) => void;
+  onRefresh: () => void;
+}) {
+  const enabledCount = watchlist.filter((item) => item.enabled).length;
+
+  return (
+    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Add Symbol</p>
+          <h2 className="mt-2 text-xl font-semibold">Search Watchlist</h2>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-400">
+          <span>{enabledCount} enabled</span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading}
+            className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_120px]">
+        <input
+          value={symbolQuery}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSearch();
+          }}
+          placeholder="Search symbol, company, forex pair..."
+          className="rounded-xl border border-gray-800 bg-[#0d1423] px-4 py-3 text-sm text-gray-100 outline-none transition placeholder:text-gray-600 focus:border-cyan-500"
+        />
+        <button
+          type="button"
+          onClick={onSearch}
+          disabled={searchLoading}
+          className="rounded-xl border border-cyan-700 bg-cyan-950/30 px-4 py-3 text-sm font-semibold text-cyan-200 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {searchLoading ? "Searching..." : "Search"}
+        </button>
+      </div>
+
+      {message ? <p className="mt-3 text-sm text-gray-400">{message}</p> : null}
+
+      {symbolResults.length > 0 ? (
+        <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
+          {symbolResults.map((result) => (
+            <div
+              key={`${result.provider}-${result.providerSymbol}`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-gray-100">{result.displayName}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {result.symbol} | {result.provider} | {result.assetClass}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onAdd(result)}
+                className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500"
+              >
+                Add
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const normalized = status.toUpperCase();
   const className =
@@ -1426,56 +1805,152 @@ function PlaceholderView({ view }: { view: AppView }) {
   );
 }
 
+function QuoteOnlyDetailsPanel({ asset }: { asset: GroupedAsset | null }) {
+  return (
+    <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Quote-Only Details</p>
+          <h3 className="mt-2 text-xl font-semibold">{asset?.symbol ?? "N/A"}</h3>
+          <p className="mt-1 text-sm text-gray-400">{asset?.name ?? "N/A"}</p>
+        </div>
+        <StatusPill status={asset?.quoteStatus ?? "UNKNOWN"} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <QuoteOnlyMetric label="Current Price" value={formatQuoteValue(asset?.price)} />
+        <QuoteOnlyMetric
+          label="Current Move"
+          value={`${formatSignedNumber(asset?.change)} / ${formatSignedNumber(asset?.changePercent)}%`}
+          tone={getSignedValueColor(asset?.change)}
+        />
+        <QuoteOnlyMetric label="Day Range" value={asset?.dayRange ?? "N/A"} />
+        <QuoteOnlyMetric label="Open" value={formatQuoteValue(asset?.open)} />
+        <QuoteOnlyMetric label="High" value={formatQuoteValue(asset?.high)} />
+        <QuoteOnlyMetric label="Low" value={formatQuoteValue(asset?.low)} />
+        <QuoteOnlyMetric label="Previous Close" value={formatQuoteValue(asset?.previousClose)} />
+        <QuoteOnlyMetric label="Provider" value={asset?.provider ?? "N/A"} />
+        <QuoteOnlyMetric label="Provider Symbol" value={asset?.providerSymbol ?? "N/A"} />
+        <QuoteOnlyMetric label="Asset Class" value={asset?.assetClass ?? "N/A"} />
+        <QuoteOnlyMetric label="Last Updated" value={formatDateTime(asset?.quoteTimestamp)} />
+        <QuoteOnlyMetric label="Bias Engine" value="Not configured" />
+      </div>
+
+      {asset?.quoteError ? (
+        <p className="mt-4 rounded-xl border border-yellow-800/60 bg-yellow-950/20 p-3 text-sm text-yellow-200">
+          {asset.quoteError}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function QuoteOnlyMetric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-gray-800 bg-[#111827] px-3 py-3">
+      <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{label}</p>
+      <p className={`mt-2 break-words text-sm font-semibold ${tone ?? "text-gray-200"}`}>
+        {value || "N/A"}
+      </p>
+    </div>
+  );
+}
+
 function WhyBiasSection({
   asset,
   regime,
   eventRisk,
   topHeadlines,
 }: {
-  asset: AssetCard | null;
+  asset: GroupedAsset | null;
   regime?: DashboardResponse["regime"];
   eventRisk?: DashboardResponse["eventRisk"];
   topHeadlines: FlashNewsItem[];
 }) {
+  if (asset && !asset.hasBiasData) {
+    return (
+      <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
+        <h3 className="text-lg font-semibold text-cyan-300">Quote-Only Context</h3>
+        <p className="mt-3 text-sm leading-7 text-gray-300">
+          {asset.symbol} is tracked as a watchlist quote. Full macro/news/technical bias is unavailable
+          because this symbol is not configured in backend assetRules.
+        </p>
+
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <BiasContributor label="Quote Status" value={asset.quoteStatus ?? "UNKNOWN"} helper="Latest provider quote state" />
+          <BiasContributor label="Provider" value={asset.provider ?? "N/A"} helper={`Provider symbol ${asset.providerSymbol ?? "N/A"}`} />
+          <BiasContributor
+            label="Price Movement"
+            value={`${formatSignedNumber(asset.changePercent)}%`}
+            helper={`Change ${formatSignedNumber(asset.change)}, price ${formatQuoteValue(asset.price)}`}
+          />
+          <BiasContributor label="Technical Context" value="Quote only" helper="OHLC and percent move are available for manual inspection." />
+          <BiasContributor label="Macro Bias" value="Unavailable" helper="No deterministic macro rule exists for this symbol yet." />
+          <BiasContributor label="News Bias" value="Unavailable" helper="No asset-specific keyword rules are configured for this symbol yet." />
+        </div>
+      </div>
+    );
+  }
+
   const assetHeadlines = topHeadlines.filter((item) => {
     const title = item.title.toLowerCase();
     return title.includes(asset?.asset.toLowerCase() ?? "") || title.includes("fed") || title.includes("inflation");
   });
-  const scoreMeaning = explainScore(asset?.score);
+  const scoreMeaning = asset?.hasBiasData ? explainScore(asset.score) : "bias unavailable";
 
   return (
     <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
       <h3 className="text-lg font-semibold text-cyan-300">Why This Bias?</h3>
       <p className="mt-3 text-sm leading-7 text-gray-300">
         Score is directional pressure: positive is bullish pressure, negative is bearish pressure,
-        and near zero is mixed or neutral. Current score: {asset?.score ?? "--"} ({scoreMeaning}).
+        and near zero is mixed or neutral. Current score: {asset?.hasBiasData ? formatScore(asset.score) : "N/A"} ({scoreMeaning}).
       </p>
 
       <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-3">
         <BiasContributor
           label="News Bias"
-          value={asset?.newsBias?.bias ?? "Neutral"}
-          helper={`Weighted headline matches: source reliability, category importance, and asset relevance. ${asset?.newsBias?.confidence ?? 0}% confidence, score ${asset?.newsBias?.score ?? 0}`}
+          value={asset?.hasBiasData ? asset?.newsBias?.bias ?? "Neutral" : "N/A"}
+          helper={
+            asset?.hasBiasData
+              ? `Weighted headline matches: source reliability, category importance, and asset relevance. ${formatScore(asset?.newsBias?.confidence)}% confidence, score ${formatScore(asset?.newsBias?.score)}`
+              : "News bias unavailable for quote-only watchlist symbols."
+          }
         />
         <BiasContributor
           label="Technical Bias"
           value={asset?.technicalBias?.bias ?? "Neutral"}
-          helper={`Live market context: asset momentum, ES/NQ, VIX, DXY, oil, US10Y, gold, and macro regime. ${asset?.technicalBias?.confidence ?? 0}% confidence, score ${asset?.technicalBias?.score ?? 0}`}
+          helper={
+            asset?.hasBiasData
+              ? `Live market context: asset momentum, ES/NQ, VIX, DXY, oil, US10Y, gold, and macro regime. ${formatScore(asset?.technicalBias?.confidence)}% confidence, score ${formatScore(asset?.technicalBias?.score)}`
+              : `Quote-only technical context. Status: ${asset?.quoteStatus ?? "UNKNOWN"}`
+          }
         />
         <BiasContributor
           label="Combined Bias"
-          value={asset?.combinedBias?.bias ?? asset?.bias ?? "Neutral"}
-          helper={`News score + technical score + cross-asset confluence. Event risk can reduce confidence and increase expected-move risk.`}
+          value={asset?.hasBiasData ? asset?.combinedBias?.bias ?? asset?.bias ?? "Neutral" : "N/A"}
+          helper={
+            asset?.hasBiasData
+              ? "News score + technical score + cross-asset confluence. Event risk can reduce confidence and increase expected-move risk."
+              : "Combined bias unavailable until deterministic rules are configured for this symbol."
+          }
         />
         <BiasContributor
           label="Macro Regime"
           value={regime?.regime?.replaceAll("_", " ") ?? "--"}
-          helper={`${regime?.confidence ?? "--"}% regime confidence`}
+          helper={`${formatScoreOrDash(regime?.confidence)}% regime confidence`}
         />
         <BiasContributor
           label="Event Risk"
           value={eventRisk?.level ?? "--"}
-          helper={`${eventRisk?.nextEvent?.title ?? "No next event"}${eventRisk?.score !== undefined ? `, score ${eventRisk.score}` : ""}`}
+          helper={`${eventRisk?.nextEvent?.title ?? "No next event"}${eventRisk?.score !== undefined ? `, score ${formatScore(eventRisk.score)}` : ""}`}
         />
       </div>
 
@@ -1523,13 +1998,32 @@ function WhyBiasSection({
               <div key={key} className="rounded-xl border border-gray-800 bg-[#111827] px-3 py-2">
                 <p className="text-xs uppercase tracking-[0.14em] text-gray-500">{key}</p>
                 <p className={`mt-1 text-sm font-semibold ${getSignedValueColor(value)}`}>
-                  {formatSignedNumber(value)}%
+                  {formatTechnicalSnapshotValue(key, value, asset?.isCustom)}
                 </p>
               </div>
             ))}
             {Object.keys(asset?.technicalBias?.snapshot ?? {}).length === 0 ? (
               <p className="col-span-2 text-sm text-gray-400">No technical snapshot loaded yet.</p>
             ) : null}
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {(asset?.technicalBias?.components ?? []).slice(0, 5).map((component) => (
+              <div
+                key={component.key}
+                className="rounded-xl border border-gray-800 bg-[#111827] px-3 py-2 text-xs text-gray-400"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-semibold text-gray-200">{component.label}</span>
+                  <span className={getSignedValueColor(component.contribution)}>
+                    {formatSignedNumber(component.contribution)}
+                  </span>
+                </div>
+                <p className="mt-1">
+                  {component.direction} | threshold {component.threshold ?? "--"}
+                </p>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -1542,7 +2036,7 @@ function WhyBiasSection({
                 className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#111827] px-3 py-2 text-sm"
               >
                 <span className="text-gray-300">{driver.label}</span>
-                <span className="text-xs text-gray-500">{driver.direction} | {driver.weight}</span>
+                <span className="text-xs text-gray-500">{driver.direction} | {formatScore(driver.weight)}</span>
               </div>
             ))}
             {(asset?.drivers ?? []).length === 0 ? (
@@ -1947,13 +2441,13 @@ function EvaluationsView({
                       <p className="mt-2 text-xs text-gray-500">{formatDateTime(row.generatedAt)}</p>
                     </div>
                     <div className="text-right text-sm">
-                      <p className="font-semibold text-gray-100">{row.confidence}%</p>
+                    <p className="font-semibold text-gray-100">{formatScore(row.confidence)}%</p>
                       <p className="text-xs text-gray-500">confidence</p>
                     </div>
                   </div>
 
                   <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-gray-400">
-                    <span>Score {row.score}</span>
+                    <span>Score {formatScore(row.score)}</span>
                     <span>{formatExpectedMove(row.bias, row.movePoints)}</span>
                     <span>Actual {formatSignedNumber(row.evaluation?.actualMove)}</span>
                   </div>
@@ -2132,7 +2626,7 @@ function HeadlineImpactRow({ item }: { item: NewsImpactItem }) {
           <span className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getHeadlineImpactClass(item.impactLabel)}`}>
             {item.impactLabel}
           </span>
-          <p className="mt-2 text-xs text-gray-500">Impact {item.impactScore}</p>
+          <p className="mt-2 text-xs text-gray-500">Impact {formatScore(item.impactScore)}</p>
         </div>
       </div>
     </div>
@@ -2205,8 +2699,8 @@ function SelectedEvaluationPanel({
 
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
         <MetricCard label="Actual Move" value={formatSignedNumber(evaluation?.actualMove)} helper={`${formatSignedNumber(evaluation?.actualMovePercent)}%`} />
-        <MetricCard label="Score" value={row.score} helper={explainScore(row.score)} />
-        <MetricCard label="Confidence" value={`${row.confidence}%`} helper="bias engine confidence" />
+        <MetricCard label="Score" value={formatScore(row.score)} helper={explainScore(row.score)} />
+        <MetricCard label="Confidence" value={`${formatScore(row.confidence)}%`} helper="bias engine confidence" />
       </div>
 
       <div className="mt-5 rounded-xl border border-yellow-800/60 bg-yellow-950/20 p-4">
@@ -2287,7 +2781,7 @@ function PostMortemPanel({ postMortem }: { postMortem: PostMortemResponse["postM
               postMortem.drivers!.slice(0, 8).map((driver, index) => (
                 <div key={`${driver.label}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                   <span className="text-gray-300">{driver.label}</span>
-                  <span className="text-xs text-gray-500">{driver.direction} | {driver.weight}</span>
+                  <span className="text-xs text-gray-500">{driver.direction} | {formatScore(driver.weight)}</span>
                 </div>
               ))
             ) : (
@@ -2345,11 +2839,11 @@ function BiasBreakdownCard({
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <div>
           <p className="text-gray-500">Confidence</p>
-          <p className="mt-1 font-semibold text-gray-100">{breakdown?.confidence ?? "--"}%</p>
+          <p className="mt-1 font-semibold text-gray-100">{formatScoreOrDash(breakdown?.confidence)}%</p>
         </div>
         <div>
           <p className="text-gray-500">Score</p>
-          <p className="mt-1 font-semibold text-gray-100">{breakdown?.score ?? "--"}</p>
+          <p className="mt-1 font-semibold text-gray-100">{formatScoreOrDash(breakdown?.score)}</p>
         </div>
       </div>
       <div className="mt-3 space-y-2">
@@ -2488,6 +2982,85 @@ function buildLinePath(values: number[], width: number, height: number) {
   return `M ${points.join(" L ")}`;
 }
 
+function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: WatchlistQuote[]): GroupedAsset[] {
+  const coreSymbols = new Set(defaultAssets.map((asset) => asset.asset));
+  const normalizedDefault = defaultAssets.map((asset) => ({
+    ...asset,
+    symbol: asset.asset,
+    name: labelMap[asset.asset] || asset.asset,
+    changePercent: asset.percent,
+    quoteStatus: "OK",
+    isCustom: false,
+    hasBiasData: true,
+    assetClass: "bias-asset",
+  }));
+  const customQuotes = watchlistQuotes
+    .filter((quote) => quote.symbol && !coreSymbols.has(quote.symbol))
+    .map((quote) => {
+      const technicalSnapshot = {
+        price: quote.price ?? 0,
+        change: quote.change ?? 0,
+        percent: quote.percent ?? 0,
+        open: quote.open ?? 0,
+        high: quote.high ?? 0,
+        low: quote.low ?? 0,
+        previousClose: quote.previousClose ?? 0,
+      };
+
+      return {
+        asset: quote.symbol,
+        symbol: quote.symbol,
+        name: quote.displayName || quote.symbol,
+        price: quote.price,
+        change: quote.change,
+        percent: quote.percent,
+        changePercent: quote.percent,
+        bias: "N/A",
+        confidence: 0,
+        score: 0,
+        movePoints: 0,
+        currentPrice: quote.price ?? 0,
+        newsBias: null,
+        technicalBias: {
+          bias: "N/A",
+          confidence: 0,
+          score: 0,
+          reasons: [
+            {
+              text: `${quote.symbol} has quote data only. Deterministic bias rules are not configured for this symbol yet.`,
+              direction: "neutral",
+              weight: 0,
+            },
+          ],
+          snapshot: technicalSnapshot,
+        },
+        combinedBias: null,
+        regime: null,
+        regimeConfidence: null,
+        drivers: [],
+        eventRisk: undefined,
+        analysis: "Bias analysis unavailable for this watchlist symbol.",
+        reasons: [],
+        lastUpdated: quote.timestamp,
+        quoteStatus: quote.quoteStatus ?? quote.status,
+        isCustom: true,
+        hasBiasData: false,
+        provider: quote.provider,
+        providerSymbol: quote.providerSymbol,
+        assetClass: quote.assetClass,
+        open: quote.open,
+        high: quote.high,
+        low: quote.low,
+        previousClose: quote.previousClose,
+        dayRange: quote.dayRange,
+        quoteTimestamp: quote.timestamp,
+        quoteError: quote.error,
+      };
+    });
+
+  return [...normalizedDefault, ...customQuotes];
+}
+
 function formatShortTime(value: string) {
   return new Date(value).toLocaleTimeString([], {
     hour: "2-digit",
@@ -2536,6 +3109,29 @@ function formatSignedNumber(value?: number | null) {
   return `${value >= 0 ? "+" : ""}${formatted}`;
 }
 
+function formatScore(value?: number | string | null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "N/A";
+}
+
+function formatScoreOrDash(value?: number | string | null) {
+  const formatted = formatScore(value);
+  return formatted === "N/A" ? "--" : formatted;
+}
+
+function formatQuoteValue(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "--";
+  if (Math.abs(value) >= 1000) return value.toLocaleString([], { maximumFractionDigits: 2 });
+  if (Math.abs(value) >= 100) return value.toFixed(2);
+  return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatTechnicalSnapshotValue(key: string, value: number, isCustom?: boolean) {
+  if (!isCustom) return `${formatSignedNumber(value)}%`;
+  if (key === "percent" || key === "change") return key === "percent" ? `${formatSignedNumber(value)}%` : formatSignedNumber(value);
+  return formatQuoteValue(value);
+}
+
 function formatWeight(value?: number | null) {
   if (typeof value !== "number" || Number.isNaN(value)) return "--";
   return value.toFixed(2);
@@ -2556,6 +3152,17 @@ function formatExpectedMove(bias?: string, move?: number | null) {
   if (bias === "Bearish") return `${formatted} pts downside`;
   if (bias === "Bullish") return `${formatted} pts upside`;
   return `${formatted} pts range`;
+}
+
+function formatExpectedMoveValue(asset?: GroupedAsset | null) {
+  if (!asset?.hasBiasData) return "N/A";
+  if (typeof asset.movePoints !== "number" || Number.isNaN(asset.movePoints)) return "N/A";
+
+  if (asset.symbol === "GOLD" || asset.symbol === "USOIL") {
+    return asset.movePoints.toFixed(5);
+  }
+
+  return asset.movePoints.toFixed(3);
 }
 
 function formatPercentMetric(value?: number | null) {
@@ -2643,13 +3250,17 @@ function isDataDegraded(systemStatus: SystemStatus | null) {
   const databaseDown = !systemStatus.database?.connected;
   const newsSources = systemStatus.dataSources?.news ?? [];
   const calendar = systemStatus.dataSources?.calendar;
+  const marketProviders = Object.values(systemStatus.dataSources?.marketProviders ?? {});
   const newsDegraded = newsSources.some((source) => source.status === "ERROR");
   const calendarDegraded =
     calendar?.status === "ERROR" ||
     calendar?.status === "UNAVAILABLE" ||
     calendar?.status === "STALE";
+  const providerDegraded = marketProviders.some(
+    (source) => source.status === "ERROR" || source.status === "UNAVAILABLE"
+  );
 
-  return databaseDown || newsDegraded || calendarDegraded;
+  return databaseDown || newsDegraded || calendarDegraded || providerDegraded;
 }
 
 function formatUtcClock(date: Date) {
