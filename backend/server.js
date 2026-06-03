@@ -579,6 +579,7 @@ async function buildBiasSnapshot() {
   const news = newsBundle.items ?? [];
   const calendarEvents = calendarBundle.events ?? [];
   const biasResult = await buildBiasEngine(market, news, calendarEvents);
+  const newsImpact = buildNewsImpactFeed(news);
   const generatedAt = new Date().toISOString();
 
   return {
@@ -601,6 +602,16 @@ async function buildBiasSnapshot() {
     rawContext: {
       market,
       news: newsBundle,
+      marketNews: {
+        fetchedAt: newsBundle.generatedAt ?? generatedAt,
+        sourceStatus: newsBundle.sources ?? [],
+        healthySourceCount: newsBundle.healthySourceCount ?? 0,
+        headlineCount: newsImpact.headlineCount,
+        impactSummary: newsImpact.summary,
+        topMarketHeadlines: (newsImpact.items ?? []).slice(0, 12),
+        freshness: buildNewsFreshnessStatus(newsBundle, generatedAt),
+      },
+      newsImpact,
       calendar: calendarBundle,
       marketFlow: biasResult.marketFlow,
       optionsPressure: biasResult.optionsPressure,
@@ -612,6 +623,31 @@ async function buildBiasSnapshot() {
       },
     },
     generatedAt,
+  };
+}
+
+function buildNewsFreshnessStatus(newsBundle = {}, fallbackTime) {
+  const items = newsBundle.items ?? [];
+  const latestTimestamp = items
+    .map((item) => new Date(item.pubDate).getTime())
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+  const checkedAt = newsBundle.generatedAt ?? fallbackTime;
+  const ageHours =
+    latestTimestamp && Number.isFinite(latestTimestamp)
+      ? (new Date(checkedAt).getTime() - latestTimestamp) / 3600000
+      : null;
+
+  return {
+    checkedAt,
+    latestPublishedAt: latestTimestamp ? new Date(latestTimestamp).toISOString() : null,
+    ageHours: typeof ageHours === "number" ? Number(ageHours.toFixed(2)) : null,
+    status:
+      items.length === 0
+        ? "UNAVAILABLE"
+        : typeof ageHours === "number" && ageHours > 24
+          ? "STALE"
+          : "FRESH",
   };
 }
 

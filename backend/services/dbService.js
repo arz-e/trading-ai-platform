@@ -439,7 +439,7 @@ export async function logBiasRun({
 
   for (const asset of Object.keys(biasOutput)) {
     const row = biasOutput[asset];
-    const assetNewsContext = buildAssetNewsContext(asset, newsContext, row);
+    const assetNewsContext = buildAssetNewsContext(asset, newsContext, row, rawContext);
     const assetCalendarContext = buildAssetCalendarContext(asset, calendarContext, eventRisk);
     const assetFormulaComponents = buildAssetFormulaComponents({
       asset,
@@ -480,6 +480,18 @@ export async function logBiasRun({
           newsContext: assetNewsContext,
           calendarContext: assetCalendarContext,
           sourceStatus,
+          newsVsFlowContext: row.newsFlowRelationship ?? null,
+          scoreContext: {
+            finalDisplayedOutput: {
+              bias: row.bias,
+              confidence: row.confidence,
+              score: row.score,
+              expectedMove: row.movePoints,
+            },
+            rawBiasScore: row.rawBiasScore ?? row.combinedBias?.score ?? null,
+            confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+            expectedMoveBasis: row.expectedMoveBasis ?? null,
+          },
         }),
         null,
         null,
@@ -933,20 +945,56 @@ function buildAssetFormulaComponents({
   };
 }
 
-function buildAssetNewsContext(asset, newsContext = null, row = {}) {
+function buildAssetNewsContext(asset, newsContext = null, row = {}, rawContext = null) {
   const matchedTitles = new Set(
     (row.newsBias?.matchedHeadlines ?? []).map((headline) => headline.title)
   );
-  const relevantItems = (newsContext?.items ?? []).filter((item) =>
-    matchedTitles.has(item.title)
+  const flowHeadlineMap = buildFlowHeadlineRelationshipMap(row.newsFlowRelationship);
+  const impactItems = rawContext?.newsImpact?.items ?? rawContext?.marketNews?.topMarketHeadlines ?? [];
+  const impactedItems = impactItems.filter((item) =>
+    Array.isArray(item.impactedAssets) && item.impactedAssets.includes(asset)
   );
+  const flowRelatedTitles = new Set(flowHeadlineMap.keys());
+  const relevantItems = (newsContext?.items ?? []).filter((item) =>
+    matchedTitles.has(item.title) || flowRelatedTitles.has(item.title)
+  );
+  const marketWideHeadlines = (rawContext?.marketNews?.topMarketHeadlines ?? impactItems)
+    .slice(0, 12)
+    .map((item) => normalizeAuditHeadline(item, flowHeadlineMap.get(item.title)));
+  const assetRelevantHeadlines = mergeAuditHeadlines([
+    ...(row.newsBias?.matchedHeadlines ?? []).map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        matchedKeywords: extractMatchedKeywords(item),
+        biasMatchSource: "newsBias",
+      })
+    ),
+    ...impactedItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: "newsImpact",
+      })
+    ),
+    ...relevantItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: matchedTitles.has(item.title) ? "newsBias" : "newsVsFlow",
+      })
+    ),
+  ]);
 
   return {
     sourceStatus: newsContext?.sources ?? [],
     fetchedAt: newsContext?.generatedAt ?? null,
     headlineCount: newsContext?.count ?? relevantItems.length,
+    marketHeadlineCount: rawContext?.marketNews?.headlineCount ?? impactItems.length,
+    marketNewsImpactSummary: rawContext?.marketNews?.impactSummary ?? rawContext?.newsImpact?.summary ?? null,
+    marketWideHeadlines,
     matchedHeadlines: row.newsBias?.matchedHeadlines ?? [],
-    relevantHeadlines: relevantItems,
+    relevantHeadlines: assetRelevantHeadlines,
+    impactedHeadlines: impactedItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: "newsImpact",
+      })
+    ),
+    newsVsFlowContext: row.newsFlowRelationship ?? null,
     newsBias: row.newsBias ?? null,
     sentimentSummary: row.sentimentSummary ?? null,
     asset,
@@ -962,14 +1010,112 @@ function buildAssetCalendarContext(asset, calendarContext = null, eventRisk = nu
         ? (new Date(event.datetime).getTime() - Date.now()) / 3600000
         : null,
   }));
+  const relevantEvents = events.filter((event) =>
+    Array.isArray(event.relatedAssets) && event.relatedAssets.includes(asset)
+  );
 
   return {
     asset,
     source: calendarContext?.source ?? null,
     generatedAt: calendarContext?.generatedAt ?? null,
     events,
+    relevantEvents,
+    upcomingEvents: events
+      .filter((event) => typeof event.hoursUntil === "number" && event.hoursUntil > 0)
+      .sort((a, b) => a.hoursUntil - b.hoursUntil)
+      .slice(0, 20),
     eventRisk,
+    eventRiskEffect: {
+      level: eventRisk?.level ?? null,
+      score: eventRisk?.score ?? null,
+      confidencePenalty: eventRisk?.confidencePenalty ?? null,
+      moveMultiplier: eventRisk?.moveMultiplier ?? null,
+      nextEvent: eventRisk?.nextEvent ?? null,
+      affectedThisAsset: eventRisk?.nextEvent
+        ? inferCalendarRelatedAssets(eventRisk.nextEvent).includes(asset)
+        : false,
+      reasons: eventRisk?.reasons ?? [],
+    },
   };
+}
+
+function buildFlowHeadlineRelationshipMap(newsFlowRelationship = {}) {
+  const map = new Map();
+  const buckets = [
+    ["confirmingHeadlines", "confirms_flow"],
+    ["contradictingHeadlines", "contradicts_flow"],
+    ["explanatoryHeadlines", "explains_flow"],
+    ["unrelatedHeadlines", "unrelated"],
+  ];
+
+  for (const [key, relationship] of buckets) {
+    for (const headline of newsFlowRelationship?.[key] ?? []) {
+      if (headline?.title) map.set(headline.title, relationship);
+    }
+  }
+
+  return map;
+}
+
+function normalizeAuditHeadline(item = {}, newsFlowRelationship = null, extra = {}) {
+  return {
+    title: item.title ?? null,
+    source: item.source ?? null,
+    publishedAt: item.pubDate ?? null,
+    link: item.link ?? item.url ?? null,
+    impactedAssets: item.impactedAssets ?? [],
+    sentimentLabel: item.sentimentLabel ?? null,
+    sentimentScore: item.sentimentScore ?? null,
+    biasDirection: resolveAuditHeadlineDirection(item),
+    matchedKeywords: extra.matchedKeywords ?? [
+      ...(item.matchedPositive ?? []),
+      ...(item.matchedNegative ?? []),
+    ],
+    matchedPositive: item.matchedPositive ?? [],
+    matchedNegative: item.matchedNegative ?? [],
+    category: item.category ?? null,
+    categories: item.categories ?? [],
+    impactScore: item.impactScore ?? null,
+    impactLabel: item.impactLabel ?? null,
+    confidence: item.confidence ?? null,
+    sourceWeight: item.sourceWeight ?? null,
+    categoryWeight: item.categoryWeight ?? null,
+    assetRelevanceWeight: item.assetRelevanceWeight ?? null,
+    matches: item.matches ?? [],
+    newsFlowRelationship,
+    biasMatchSource: extra.biasMatchSource ?? null,
+  };
+}
+
+function extractMatchedKeywords(item = {}) {
+  return (item.matches ?? []).map((match) => match.keyword).filter(Boolean);
+}
+
+function resolveAuditHeadlineDirection(item = {}) {
+  if (item.sentimentLabel === "POSITIVE") return "positive";
+  if (item.sentimentLabel === "NEGATIVE") return "negative";
+
+  const matches = item.matches ?? [];
+  const positive = matches.filter((match) => match.direction === "positive").length;
+  const negative = matches.filter((match) => match.direction === "negative").length;
+
+  if (positive > negative) return "positive";
+  if (negative > positive) return "negative";
+  return item.sentimentLabel ? String(item.sentimentLabel).toLowerCase() : "neutral";
+}
+
+function mergeAuditHeadlines(items = []) {
+  const seen = new Set();
+  const output = [];
+
+  for (const item of items) {
+    const key = String(item.title ?? "").toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+
+  return output.slice(0, 20);
 }
 
 function inferCalendarRelatedAssets(event = {}) {
