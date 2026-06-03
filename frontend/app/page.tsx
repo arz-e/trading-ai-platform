@@ -1985,8 +1985,7 @@ function FlowDashboard({ rows }: { rows: FlowRow[] }) {
           <span>Pressure</span>
           <span className="text-right">Score</span>
         </div>
-        <div className="relative divide-y divide-gray-800/80">
-          <div className="absolute bottom-0 left-1/2 top-0 hidden w-px bg-gray-700/80 sm:block" />
+        <div className="divide-y divide-gray-800/80">
           {visibleRows.map((row) => (
             <FlowPressureRow key={`flow-row-${row.asset}`} row={row} />
           ))}
