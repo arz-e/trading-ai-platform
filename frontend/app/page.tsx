@@ -380,6 +380,9 @@ type SymbolSearchResponse = {
 type GroupedAsset = AssetCard & {
   symbol: string;
   name: string;
+  currentPrice?: number;
+  reasons?: string[];
+  lastUpdated?: string;
   changePercent: number | null;
   quoteStatus?: string;
   isCustom: boolean;
@@ -394,6 +397,7 @@ type GroupedAsset = AssetCard & {
   dayRange?: string | null;
   quoteTimestamp?: string;
   quoteError?: string | null;
+  watchlistId?: number;
 };
 
 type CalendarEvent = {
@@ -677,6 +681,29 @@ export default function Home() {
     } catch (err) {
       console.error(err);
       setWatchlistMessage(err instanceof Error ? err.message : "Could not add symbol.");
+    }
+  }
+
+  async function removeWatchlistItem(asset: GroupedAsset) {
+    if (!asset.watchlistId || !asset.isCustom) return;
+    setWatchlistMessage(`Removing ${asset.symbol}...`);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/watchlist/${asset.watchlistId}`, {
+        method: "DELETE",
+      });
+      const data: { error?: string } = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to remove symbol");
+
+      setWatchlistMessage(`Removed ${asset.symbol} from watchlist.`);
+      await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
+
+      if (selected === asset.symbol) {
+        setSelected(assetOrder[0]);
+      }
+    } catch (err) {
+      console.error(err);
+      setWatchlistMessage(err instanceof Error ? err.message : "Could not remove symbol.");
     }
   }
 
@@ -969,7 +996,10 @@ export default function Home() {
 
         <DataSourceHealthCard systemStatus={systemStatus} />
 
-        <MarketFlowProxyCard marketFlow={dashboard?.marketFlow} />
+        <MarketFlowProxyCard
+          marketFlow={dashboard?.marketFlow}
+          headlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
+        />
 
         <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
           <div className="mb-4 flex items-center justify-between">
@@ -1192,9 +1222,17 @@ export default function Home() {
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {groupedAssets.map((item) => (
-                <button
+                <div
                   key={item.symbol}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelected(item.symbol)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelected(item.symbol);
+                    }
+                  }}
                   className={`rounded-2xl border p-5 text-left shadow-lg transition ${
                     selected === item.symbol
                       ? "border-cyan-500 bg-[#131c2f]"
@@ -1216,6 +1254,21 @@ export default function Home() {
                       {item.hasBiasData ? item.bias : "Quote only"}
                     </span>
                   </div>
+
+                  {item.isCustom && item.watchlistId ? (
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeWatchlistItem(item);
+                        }}
+                        className="rounded-lg border border-red-900/70 bg-red-950/20 px-2.5 py-1 text-xs font-semibold text-red-200 transition hover:border-red-500"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
 
                   <div className="mt-5">
                     <p className="text-3xl font-bold">
@@ -1250,7 +1303,7 @@ export default function Home() {
                       {formatExpectedMoveValue(item)}
                     </span>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
 
@@ -1850,69 +1903,45 @@ function WatchlistSearchBar({
   );
 }
 
-function MarketFlowProxyCard({ marketFlow }: { marketFlow?: MarketFlowSnapshot }) {
-  const inflows = marketFlow?.inflows ?? [];
-  const outflows = marketFlow?.outflows ?? [];
-  const rankedRows = marketFlow?.rankedFlows?.length
-    ? marketFlow.rankedFlows
-    : [...inflows, ...outflows].sort((a, b) => Math.abs(b.flowScore) - Math.abs(a.flowScore));
-  const strongestInflows = inflows.slice(0, 4);
-  const strongestOutflows = outflows.slice(0, 4);
+function MarketFlowProxyCard({
+  marketFlow,
+  headlines,
+}: {
+  marketFlow?: MarketFlowSnapshot;
+  headlines: FlashNewsItem[];
+}) {
+  const rankedRows = (marketFlow?.rankedFlows ?? []).length
+    ? [...(marketFlow?.rankedFlows ?? [])].sort((a, b) => b.flowScore - a.flowScore)
+    : [...(marketFlow?.inflows ?? []), ...(marketFlow?.outflows ?? [])].sort((a, b) => b.flowScore - a.flowScore);
+  const contextHeadlines = getFlowContextHeadlines(headlines);
 
   return (
     <section className="mb-6 overflow-hidden rounded-2xl border border-gray-800 bg-[#111827]">
       <div className="border-b border-gray-800 bg-[#0d1423]/70 p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Flow Proxy</p>
-          <h2 className="mt-2 text-xl font-semibold">
-            {marketFlow?.riskTone?.replaceAll("_", " ") ?? "Loading flow context"}
-          </h2>
-          <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-400">
-            {marketFlow?.summary ?? "Comparing proxy moves across risk assets, safe havens, dollar, rates, energy, and volatility."}
-          </p>
-        </div>
-        <StatusPill status={marketFlow?.status ?? "UNKNOWN"} />
-      </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <FlowSummaryTile label="Risk Tone" value={marketFlow?.riskTone?.replaceAll("_", " ") ?? "Unknown"} />
-          <FlowSummaryTile label="Strongest Inflow" value={strongestInflows[0]?.asset ?? "None"} tone="positive" />
-          <FlowSummaryTile label="Strongest Outflow" value={strongestOutflows[0]?.asset ?? "None"} tone="negative" />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-0 lg:grid-cols-[minmax(0,1fr)_280px]">
-        <FlowDashboard rows={rankedRows} />
-        <div className="border-t border-gray-800 bg-[#0b1220] p-4 lg:border-l lg:border-t-0">
-          <FlowMiniList title="Strongest Inflows" rows={strongestInflows} empty="No inflow pressure loaded." />
-          <div className="mt-4">
-            <FlowMiniList title="Strongest Outflows" rows={strongestOutflows} empty="No outflow pressure loaded." />
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Flow Proxy</p>
+            <h2 className="mt-2 text-xl font-semibold capitalize">
+              {marketFlow?.riskTone?.replaceAll("_", " ") ?? "Loading flow context"}
+            </h2>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-400">
+              {marketFlow?.summary ?? "Comparing proxy moves across risk assets, safe havens, dollar, rates, energy, and volatility."}
+            </p>
           </div>
+          <StatusPill status={marketFlow?.status ?? "UNKNOWN"} />
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-0 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <FlowDashboard rows={rankedRows} />
+        <FlowContextNewsPanel headlines={contextHeadlines} />
       </div>
     </section>
   );
 }
 
-function FlowSummaryTile({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "positive" | "negative" | "neutral" }) {
-  const toneClass =
-    tone === "positive"
-      ? "text-green-300"
-      : tone === "negative"
-        ? "text-red-300"
-        : "text-gray-100";
-
-  return (
-    <div className="rounded-xl border border-gray-800 bg-[#111827] px-3 py-2">
-      <p className="text-[11px] uppercase tracking-[0.16em] text-gray-500">{label}</p>
-      <p className={`mt-1 truncate text-sm font-semibold capitalize ${toneClass}`}>{value}</p>
-    </div>
-  );
-}
-
 function FlowDashboard({ rows }: { rows: FlowRow[] }) {
-  const visibleRows = rows.slice(0, 12);
+  const visibleRows = rows.slice(0, 14);
 
   return (
     <div className="p-4">
@@ -1946,12 +1975,18 @@ function FlowDashboard({ rows }: { rows: FlowRow[] }) {
 }
 
 function FlowPressureRow({ row }: { row: FlowRow }) {
-  const isPositive = row.flowScore >= 0 || row.direction === "inflow";
+  const isNeutral = row.direction === "neutral" || row.flowScore === 0;
+  const isPositive = !isNeutral && (row.flowScore > 0 || row.direction === "inflow");
   const width = `${Math.min(100, Math.abs(row.flowScore))}%`;
-  const reason = row.reasons?.[0] ?? row.direction;
+  const directionLabel = row.direction === "inflow" ? "Inflow" : row.direction === "outflow" ? "Outflow" : "Neutral";
+  const reason = row.reasons?.[0];
+  const directionClass = isNeutral ? "text-gray-300" : isPositive ? "text-green-300" : "text-red-300";
 
   return (
-    <div className="relative grid grid-cols-1 gap-2 rounded-lg border border-gray-800 bg-[#111827] px-3 py-2 sm:grid-cols-[120px_minmax(0,1fr)_72px] sm:items-center">
+    <div
+      className="relative grid grid-cols-1 gap-2 rounded-lg border border-gray-800 bg-[#111827] px-3 py-2 sm:grid-cols-[150px_minmax(0,1fr)_88px] sm:items-center"
+      title={reason}
+    >
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="shrink-0 rounded-md bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-100">{row.asset}</span>
@@ -1962,18 +1997,17 @@ function FlowPressureRow({ row }: { row: FlowRow }) {
       <div>
         <div className="grid grid-cols-2 gap-0">
           <div className="flex h-3 items-center justify-end rounded-l-full bg-gray-800/80">
-            {!isPositive ? <div className="h-3 rounded-l-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.35)]" style={{ width }} /> : null}
+            {!isPositive && !isNeutral ? <div className="h-3 rounded-l-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.35)]" style={{ width }} /> : null}
           </div>
           <div className="flex h-3 items-center rounded-r-full bg-gray-800/80">
             {isPositive ? <div className="h-3 rounded-r-full bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.35)]" style={{ width }} /> : null}
           </div>
         </div>
-        <p className="mt-1 truncate text-xs text-gray-500">{reason}</p>
       </div>
 
       <div className="flex items-center justify-between gap-3 sm:block sm:text-right">
-        <span className={`text-xs font-semibold capitalize ${isPositive ? "text-green-300" : "text-red-300"}`}>
-          {row.direction}
+        <span className={`text-xs font-semibold capitalize ${directionClass}`}>
+          {directionLabel}
         </span>
         <p className={`text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>{formatScore(row.flowScore)}</p>
       </div>
@@ -1981,27 +2015,38 @@ function FlowPressureRow({ row }: { row: FlowRow }) {
   );
 }
 
-function FlowMiniList({ title, rows, empty }: { title: string; rows: FlowRow[]; empty: string }) {
+function FlowContextNewsPanel({ headlines }: { headlines: FlashNewsItem[] }) {
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-gray-100">{title}</h3>
-      <div className="mt-3 space-y-2">
-        {rows.map((row) => (
-          <div key={`${title}-${row.asset}`} className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-gray-100">{row.asset}</p>
-                <p className="mt-1 truncate text-xs text-gray-500">{row.reasons?.[0] ?? row.strength}</p>
-              </div>
-              <p className={`shrink-0 text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>
-                {formatScore(row.flowScore)}
-              </p>
-            </div>
-          </div>
-        ))}
-        {rows.length === 0 ? <p className="text-sm text-gray-400">{empty}</p> : null}
+    <aside className="border-t border-gray-800 bg-[#0b1220] p-4 xl:border-l xl:border-t-0">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-100">News vs Flow</h3>
+          <p className="mt-1 text-xs text-gray-500">Context only, not AI analysis.</p>
+        </div>
+        <span className="rounded-lg border border-gray-800 bg-[#111827] px-2 py-1 text-[11px] font-semibold text-gray-400">
+          Context
+        </span>
       </div>
-    </div>
+
+      <div className="dark-scrollbar mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+        {headlines.length > 0 ? (
+          headlines.slice(0, 6).map((headline, index) => (
+            <div key={`${headline.title}-${index}`} className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-2">
+              <p className="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">{headline.title}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500">
+                <span>{headline.source}</span>
+                <span>{headline.category}</span>
+                <span className={getImpactTextColor(headline.impactLabel)}>{headline.impactLabel}</span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="rounded-lg border border-gray-800 bg-[#111827] p-3 text-sm leading-6 text-gray-400">
+            No clear flow-related news context detected.
+          </p>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -2482,8 +2527,8 @@ function UpcomingNewsView({
         <MetricCard label="Average Impact" value={newsImpact?.summary?.topAverageImpact ?? "--"} helper="top headline sample" />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <section className="rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-7">
+      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12 xl:[height:calc(100vh-220px)] xl:min-h-[520px]">
+        <section className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-xl font-semibold">Economic Calendar</h2>
@@ -2524,7 +2569,7 @@ function UpcomingNewsView({
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="dark-scrollbar mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {filteredEvents.length > 0 ? (
               filteredEvents.slice(0, 30).map((event, index) => (
                 <CalendarEventRow
@@ -2548,7 +2593,7 @@ function UpcomingNewsView({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-5">
+        <section className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Market Headlines</h2>
@@ -2557,7 +2602,7 @@ function UpcomingNewsView({
             <StatusPill status={isDataDegraded(systemStatus) ? "DEGRADED" : "OK"} />
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="dark-scrollbar mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {headlines.length > 0 ? (
               headlines.slice(0, 14).map((item, index) => (
                 <HeadlineImpactRow key={`${item.title}-${index}`} item={item} />
@@ -2604,29 +2649,6 @@ function EvaluationsView({
   const filtersActive = assetFilter !== "ALL" || verdictFilter !== "ALL";
   const selectedIndex = Math.max(0, rows.findIndex((row) => row.id === selectedEvaluationId));
   const selectedRow = rows[selectedIndex] ?? rows[0] ?? null;
-  const selectedReviewRef = useRef<HTMLElement | null>(null);
-  const [queuePanelHeight, setQueuePanelHeight] = useState<number | null>(null);
-
-  useEffect(() => {
-    const element = selectedReviewRef.current;
-    if (!element) return;
-
-    function updateHeight() {
-      const nextHeight = element?.getBoundingClientRect().height ?? 0;
-      setQueuePanelHeight(nextHeight > 0 ? nextHeight : null);
-    }
-
-    updateHeight();
-
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(element);
-    window.addEventListener("resize", updateHeight);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateHeight);
-    };
-  }, [selectedRow?.id, postMortem?.id, rows.length]);
 
   function selectByOffset(offset: number) {
     if (!rows.length) return;
@@ -2670,10 +2692,9 @@ function EvaluationsView({
         />
       </div>
 
-      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12">
+      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12 xl:[height:calc(100vh-220px)] xl:min-h-[560px]">
         <section
           className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-4"
-          style={queuePanelHeight ? { height: queuePanelHeight } : undefined}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -2786,8 +2807,7 @@ function EvaluationsView({
         </section>
 
         <section
-          ref={selectedReviewRef}
-          className="flex min-h-0 rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-8"
+          className="dark-scrollbar flex min-h-0 overflow-y-auto rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-8"
         >
           {selectedRow ? (
             <SelectedEvaluationPanel row={selectedRow} postMortem={postMortem} />
@@ -3307,7 +3327,7 @@ function buildLinePath(values: number[], width: number, height: number) {
 }
 
 function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: WatchlistQuote[]): GroupedAsset[] {
-  const coreSymbols = new Set(defaultAssets.map((asset) => asset.asset));
+  const coreSymbols = new Set(defaultAssets.map((asset) => normalizeAssetKey(asset.asset)));
   const normalizedDefault = defaultAssets.map((asset) => ({
     ...asset,
     symbol: asset.asset,
@@ -3318,71 +3338,83 @@ function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: Watchli
     hasBiasData: true,
     assetClass: "bias-asset",
   }));
-  const customQuotes = watchlistQuotes
-    .filter((quote) => quote.symbol && !coreSymbols.has(quote.symbol))
-    .map((quote) => {
-      const technicalSnapshot = {
-        price: quote.price ?? 0,
-        change: quote.change ?? 0,
-        percent: quote.percent ?? 0,
-        open: quote.open ?? 0,
-        high: quote.high ?? 0,
-        low: quote.low ?? 0,
-        previousClose: quote.previousClose ?? 0,
-      };
+  const customQuoteMap = new Map<string, GroupedAsset>();
 
-      return {
-        asset: quote.symbol,
-        symbol: quote.symbol,
-        name: quote.displayName || quote.symbol,
-        price: quote.price,
-        change: quote.change,
-        percent: quote.percent,
-        changePercent: quote.percent,
+  watchlistQuotes.forEach((quote) => {
+    const symbolKey = normalizeAssetKey(quote.symbol);
+    const providerKey = normalizeAssetKey(quote.providerSymbol);
+    if (!symbolKey || coreSymbols.has(symbolKey) || (providerKey && coreSymbols.has(providerKey))) return;
+
+    const dedupeKey = symbolKey || providerKey;
+    if (!dedupeKey || customQuoteMap.has(dedupeKey)) return;
+
+    const technicalSnapshot = {
+      price: quote.price ?? 0,
+      change: quote.change ?? 0,
+      percent: quote.percent ?? 0,
+      open: quote.open ?? 0,
+      high: quote.high ?? 0,
+      low: quote.low ?? 0,
+      previousClose: quote.previousClose ?? 0,
+    };
+
+    customQuoteMap.set(dedupeKey, {
+      asset: quote.symbol,
+      symbol: quote.symbol,
+      name: quote.displayName || quote.symbol,
+      price: quote.price,
+      change: quote.change,
+      percent: quote.percent,
+      changePercent: quote.percent,
+      bias: "N/A",
+      confidence: 0,
+      score: 0,
+      movePoints: 0,
+      currentPrice: quote.price ?? 0,
+      newsBias: null,
+      technicalBias: {
         bias: "N/A",
         confidence: 0,
         score: 0,
-        movePoints: 0,
-        currentPrice: quote.price ?? 0,
-        newsBias: null,
-        technicalBias: {
-          bias: "N/A",
-          confidence: 0,
-          score: 0,
-          reasons: [
-            {
-              text: `${quote.symbol} has quote data only. Deterministic bias rules are not configured for this symbol yet.`,
-              direction: "neutral",
-              weight: 0,
-            },
-          ],
-          snapshot: technicalSnapshot,
-        },
-        combinedBias: null,
-        regime: null,
-        regimeConfidence: null,
-        drivers: [],
-        eventRisk: undefined,
-        analysis: "Bias analysis unavailable for this watchlist symbol.",
-        reasons: [],
-        lastUpdated: quote.timestamp,
-        quoteStatus: quote.quoteStatus ?? quote.status,
-        isCustom: true,
-        hasBiasData: false,
-        provider: quote.provider,
-        providerSymbol: quote.providerSymbol,
-        assetClass: quote.assetClass,
-        open: quote.open,
-        high: quote.high,
-        low: quote.low,
-        previousClose: quote.previousClose,
-        dayRange: quote.dayRange,
-        quoteTimestamp: quote.timestamp,
-        quoteError: quote.error,
-      };
+        reasons: [
+          {
+            text: `${quote.symbol} has quote data only. Deterministic bias rules are not configured for this symbol yet.`,
+            direction: "neutral",
+            weight: 0,
+          },
+        ],
+        snapshot: technicalSnapshot,
+      },
+      combinedBias: null,
+      regime: null,
+      regimeConfidence: null,
+      drivers: [],
+      eventRisk: undefined,
+      analysis: "Bias analysis unavailable for this watchlist symbol.",
+      reasons: [],
+      lastUpdated: quote.timestamp,
+      quoteStatus: quote.quoteStatus ?? quote.status,
+      isCustom: true,
+      hasBiasData: false,
+      provider: quote.provider,
+      providerSymbol: quote.providerSymbol,
+      assetClass: quote.assetClass,
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      previousClose: quote.previousClose,
+      dayRange: quote.dayRange,
+      quoteTimestamp: quote.timestamp,
+      quoteError: quote.error,
+      watchlistId: quote.id,
     });
+  });
 
-  return [...normalizedDefault, ...customQuotes];
+  return [...normalizedDefault, ...customQuoteMap.values()];
+}
+
+function normalizeAssetKey(value?: string | null) {
+  return (value ?? "").trim().toUpperCase();
 }
 
 function formatShortTime(value: string) {
@@ -3508,6 +3540,46 @@ function getHeadlineImpactClass(value?: string) {
   if (value === "HIGH") return "text-orange-300 bg-orange-900/30 border-orange-700";
   if (value === "MEDIUM") return "text-yellow-300 bg-yellow-900/20 border-yellow-700";
   return "text-gray-300 bg-gray-800 border-gray-700";
+}
+
+function getImpactTextColor(value?: string) {
+  if (value === "EXTREME") return "text-red-300";
+  if (value === "HIGH") return "text-orange-300";
+  if (value === "MEDIUM") return "text-yellow-300";
+  return "text-gray-400";
+}
+
+function getFlowContextHeadlines(headlines: FlashNewsItem[]) {
+  const flowTerms = [
+    "dollar",
+    "dxy",
+    "yield",
+    "treasury",
+    "fed",
+    "rate",
+    "inflation",
+    "cpi",
+    "jobs",
+    "oil",
+    "energy",
+    "gold",
+    "safe haven",
+    "volatility",
+    "vix",
+    "risk-off",
+    "risk on",
+    "equity",
+    "stocks",
+    "tech",
+    "nasdaq",
+  ];
+
+  return headlines
+    .filter((headline) => {
+      const searchable = `${headline.title} ${headline.category} ${headline.source}`.toLowerCase();
+      return flowTerms.some((term) => searchable.includes(term));
+    })
+    .sort((a, b) => b.impactScore - a.impactScore);
 }
 
 function getDirectionResult(evaluation?: EvaluationDetail): ReviewToneResult {
