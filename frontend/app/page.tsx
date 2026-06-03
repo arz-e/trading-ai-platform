@@ -1965,8 +1965,8 @@ function FlowDashboard({ rows }: { rows: FlowRow[] }) {
   const visibleRows = rows.slice(0, 14);
 
   return (
-    <div className="p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-gray-100">Ranked Proxy Pressure</h3>
           <p className="mt-1 text-xs text-gray-500">Negative pressure points left. Positive pressure points right.</p>
@@ -1978,14 +1978,20 @@ function FlowDashboard({ rows }: { rows: FlowRow[] }) {
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-800 bg-[#0b1220] p-3">
-        <div className="relative space-y-2">
+      <div className="overflow-hidden rounded-xl border border-gray-800 bg-[#0b1220]">
+        <div className="hidden grid-cols-[86px_74px_minmax(180px,1fr)_64px] border-b border-gray-800 bg-[#111827]/70 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-gray-500 md:grid">
+          <span>Symbol</span>
+          <span>Direction</span>
+          <span>Pressure</span>
+          <span className="text-right">Score</span>
+        </div>
+        <div className="relative divide-y divide-gray-800/80">
           <div className="absolute bottom-0 left-1/2 top-0 hidden w-px bg-gray-700/80 sm:block" />
           {visibleRows.map((row) => (
             <FlowPressureRow key={`flow-row-${row.asset}`} row={row} />
           ))}
           {visibleRows.length === 0 ? (
-            <p className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-4 text-sm text-gray-400">
+            <p className="px-3 py-4 text-sm text-gray-400">
               Market flow proxy rows are still loading.
             </p>
           ) : null}
@@ -2005,33 +2011,24 @@ function FlowPressureRow({ row }: { row: FlowRow }) {
 
   return (
     <div
-      className="relative grid grid-cols-1 gap-2 rounded-lg border border-gray-800 bg-[#111827] px-3 py-2 sm:grid-cols-[150px_minmax(0,1fr)_88px] sm:items-center"
+      className="relative grid grid-cols-[72px_74px_minmax(120px,1fr)_58px] items-center gap-2 px-3 py-1.5 transition hover:bg-[#111827]/75 md:grid-cols-[86px_74px_minmax(180px,1fr)_64px]"
       title={reason}
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="shrink-0 rounded-md bg-gray-800 px-2 py-1 text-xs font-semibold text-gray-100">{row.asset}</span>
-          <span className="truncate text-xs text-gray-500">{row.displayName}</span>
-        </div>
-      </div>
+      <span className="text-xs font-semibold text-gray-100">{row.asset}</span>
+      <span className={`text-xs font-semibold ${directionClass}`}>{directionLabel}</span>
 
       <div>
         <div className="grid grid-cols-2 gap-0">
-          <div className="flex h-3 items-center justify-end rounded-l-full bg-gray-800/80">
-            {!isPositive && !isNeutral ? <div className="h-3 rounded-l-full bg-red-400 shadow-[0_0_12px_rgba(248,113,113,0.35)]" style={{ width }} /> : null}
+          <div className="flex h-2 items-center justify-end rounded-l-full bg-gray-800/80">
+            {!isPositive && !isNeutral ? <div className="h-2 rounded-l-full bg-red-400 shadow-[0_0_10px_rgba(248,113,113,0.25)]" style={{ width }} /> : null}
           </div>
-          <div className="flex h-3 items-center rounded-r-full bg-gray-800/80">
-            {isPositive ? <div className="h-3 rounded-r-full bg-green-400 shadow-[0_0_12px_rgba(74,222,128,0.35)]" style={{ width }} /> : null}
+          <div className="flex h-2 items-center rounded-r-full bg-gray-800/80">
+            {isPositive ? <div className="h-2 rounded-r-full bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.25)]" style={{ width }} /> : null}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-3 sm:block sm:text-right">
-        <span className={`text-xs font-semibold capitalize ${directionClass}`}>
-          {directionLabel}
-        </span>
-        <p className={`text-sm font-semibold ${getSignedValueColor(row.flowScore)}`}>{formatScore(row.flowScore)}</p>
-      </div>
+      <p className={`text-sm font-semibold md:text-right ${getSignedValueColor(row.flowScore)}`}>{formatScore(row.flowScore)}</p>
     </div>
   );
 }
