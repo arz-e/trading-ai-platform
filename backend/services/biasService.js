@@ -42,7 +42,7 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       eventRisk,
     });
     const price = market[asset]?.price ?? 0;
-    const movePoints = estimateExpectedMove(asset, price, combined.score, eventRisk);
+    const rawMovePoints = estimateExpectedMove(asset, price, combined.score, eventRisk);
     const drivers = summarizeDrivers(combined.reasons);
     const sentimentSummary = buildAssetSentimentSummary(asset, sentimentItems);
     const flow = flowRowForAsset(marketFlow, asset);
@@ -52,7 +52,7 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       bias: combined.bias,
       confidence: combined.confidence,
       score: combined.score,
-      movePoints,
+      movePoints: rawMovePoints,
       currentPrice: price,
       newsBias,
       technicalBias,
@@ -72,12 +72,24 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       eventRisk,
       optionsPressure,
     });
+    const confluenceMoveScore = normalizeConfluenceScoreForMove(confluence.edgeScore);
+    const finalMovePoints = estimateExpectedMove(asset, price, confluenceMoveScore, eventRisk);
+    const expectedMoveBasis = buildExpectedMoveBasis({
+      asset,
+      price,
+      rawBiasScore: combined.score,
+      confluenceScore: confluence.edgeScore,
+      confluenceMoveScore,
+      eventRisk,
+      rawMovePoints,
+      finalMovePoints,
+    });
     const analysisPayload = buildAnalysisPayload({
       asset,
       bias: confluence.finalBias,
       confidence: confluence.confidence,
-      score: combined.score,
-      movePoints,
+      score: confluence.edgeScore,
+      movePoints: finalMovePoints,
       currentPrice: price,
       atr: null,
       regime: regime.regime,
@@ -91,8 +103,15 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
     output[asset] = {
       bias: confluence.finalBias,
       confidence: confluence.confidence,
-      score: combined.score,
-      movePoints,
+      score: confluence.edgeScore,
+      displayScore: confluence.edgeScore,
+      rawBiasScore: combined.score,
+      legacyScore: combined.score,
+      confluenceScore: confluence.edgeScore,
+      edgeScore: confluence.edgeScore,
+      movePoints: finalMovePoints,
+      rawMovePoints,
+      expectedMoveBasis,
       currentPrice: price,
       newsBias,
       technicalBias,
@@ -109,7 +128,6 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       optionsPressure,
       confluence,
       trendState: confluence.trendState,
-      edgeScore: confluence.edgeScore,
       watchReasons: confluence.watchReasons,
       avoidReasons: confluence.avoidReasons,
       lastUpdated: new Date().toISOString(),
@@ -583,6 +601,38 @@ function estimateExpectedMove(asset, price, score, eventRisk = {}) {
   }
 
   return Number(rawMove.toFixed(3));
+}
+
+function normalizeConfluenceScoreForMove(edgeScore = 0) {
+  return Number((Number(edgeScore || 0) / 18).toFixed(4));
+}
+
+function buildExpectedMoveBasis({
+  asset,
+  price,
+  rawBiasScore,
+  confluenceScore,
+  confluenceMoveScore,
+  eventRisk = {},
+  rawMovePoints,
+  finalMovePoints,
+}) {
+  return {
+    asset,
+    basis: "confluenceScore",
+    displayScoreField: "score",
+    rawBiasScore,
+    legacyScore: rawBiasScore,
+    confluenceScore,
+    edgeScore: confluenceScore,
+    normalizedConfluenceScore: confluenceMoveScore,
+    currentPrice: price,
+    eventRiskMultiplier: eventRisk.moveMultiplier ?? 1,
+    rawMovePoints,
+    finalMovePoints,
+    formula:
+      "abs(edgeScore / 18) * (currentPrice * 0.0005) * eventRisk.moveMultiplier",
+  };
 }
 
 function buildAssetSentimentSummary(asset, sentimentItems = []) {

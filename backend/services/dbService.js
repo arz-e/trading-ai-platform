@@ -882,12 +882,20 @@ function buildAssetFormulaComponents({
       bias: row.bias,
       confidence: row.confidence,
       score: row.score,
+      displayScore: row.displayScore ?? row.score,
+      confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+      rawBiasScore: row.rawBiasScore ?? combined.score ?? null,
       expectedMove: row.movePoints,
+      expectedMoveBasis: row.expectedMoveBasis ?? null,
     },
     components: {
       newsScore: combined.newsScore ?? row.newsBias?.score ?? 0,
       technicalScore: combined.technicalScore ?? row.technicalBias?.score ?? 0,
-      combinedScore: combined.score ?? row.score,
+      combinedScore: combined.score ?? row.rawBiasScore ?? row.score,
+      rawBiasScore: row.rawBiasScore ?? combined.score ?? null,
+      legacyScore: row.legacyScore ?? row.rawBiasScore ?? combined.score ?? null,
+      confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+      displayScore: row.displayScore ?? row.score,
       crossAssetConfluence: extractCrossAssetConfluence(row.combinedBias?.reasons),
       eventRiskLevel: eventRisk?.level ?? row.eventRisk?.level ?? null,
       eventRiskScore: eventRisk?.score ?? row.eventRisk?.score ?? null,
@@ -905,6 +913,8 @@ function buildAssetFormulaComponents({
     confluence: row.confluence ?? null,
     trendState: row.trendState ?? null,
     edgeScore: row.edgeScore ?? null,
+    rawMovePoints: row.rawMovePoints ?? null,
+    expectedMoveBasis: row.expectedMoveBasis ?? null,
     watchReasons: row.watchReasons ?? [],
     avoidReasons: row.avoidReasons ?? [],
     formulas: {
@@ -912,9 +922,10 @@ function buildAssetFormulaComponents({
       advancedConfluence:
         "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure - eventRiskAdjustment",
       confidence:
-        "scoreToConfidence(combinedScore, reasonCount) - eventRisk.confidencePenalty",
+        "advancedConfluence.confidence after event-risk adjustment",
       expectedMove:
-        "abs(combinedScore) * (currentPrice * 0.0005) * eventRisk.moveMultiplier",
+        row.expectedMoveBasis?.formula ??
+        "abs(edgeScore / 18) * (currentPrice * 0.0005) * eventRisk.moveMultiplier",
     },
     reasons: row.combinedBias?.reasons ?? row.reasons ?? [],
     marketSnapshot: market,

@@ -604,6 +604,12 @@ async function buildBiasSnapshot() {
       calendar: calendarBundle,
       marketFlow: biasResult.marketFlow,
       optionsPressure: biasResult.optionsPressure,
+      scoreContract: {
+        score: "final confluence display score",
+        rawBiasScore: "legacy combined news/technical/macro/event score",
+        edgeScore: "advanced confluence score",
+        expectedMove: "based on normalized confluence score, not raw bias score",
+      },
     },
     generatedAt,
   };

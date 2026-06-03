@@ -57,7 +57,24 @@ type AssetCard = {
   bias: string;
   confidence: number;
   score: number;
+  displayScore?: number | null;
+  rawBiasScore?: number | null;
+  legacyScore?: number | null;
+  confluenceScore?: number | null;
   movePoints: number;
+  rawMovePoints?: number | null;
+  expectedMoveBasis?: {
+    basis?: string;
+    rawBiasScore?: number | null;
+    legacyScore?: number | null;
+    confluenceScore?: number | null;
+    edgeScore?: number | null;
+    normalizedConfluenceScore?: number | null;
+    eventRiskMultiplier?: number | null;
+    rawMovePoints?: number | null;
+    finalMovePoints?: number | null;
+    formula?: string;
+  } | null;
   newsBias?: BiasBreakdown | null;
   technicalBias?: BiasBreakdown | null;
   combinedBias?: BiasBreakdown | null;
@@ -1340,7 +1357,7 @@ export default function Home() {
                     </p>
                   </div>
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
-                    <p className="text-sm text-gray-400">Score</p>
+                    <p className="text-sm text-gray-400">Final Score</p>
                     <p className="mt-2 text-3xl font-bold">
                       {selectedAsset?.hasBiasData ? formatScore(selectedAsset.score) : "N/A"}
                     </p>
@@ -2291,13 +2308,18 @@ function WhyBiasSection({
     return title.includes(asset?.asset.toLowerCase() ?? "") || title.includes("fed") || title.includes("inflation");
   });
   const scoreMeaning = asset?.hasBiasData ? explainScore(asset.score) : "bias unavailable";
+  const rawScoreText =
+    asset?.hasBiasData && typeof asset.rawBiasScore === "number"
+      ? ` Raw Bias Score: ${formatScore(asset.rawBiasScore)}.`
+      : "";
 
   return (
     <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
       <h3 className="text-lg font-semibold text-cyan-300">Why This Bias?</h3>
       <p className="mt-3 text-sm leading-7 text-gray-300">
-        Score is directional pressure: positive is bullish pressure, negative is bearish pressure,
-        and near zero is mixed or neutral. Current score: {asset?.hasBiasData ? formatScore(asset.score) : "N/A"} ({scoreMeaning}).
+        Final Score is confluence-adjusted directional pressure: positive is bullish pressure,
+        negative is bearish pressure, and near zero is mixed or neutral. Current final score:{" "}
+        {asset?.hasBiasData ? formatScore(asset.score) : "N/A"} ({scoreMeaning}).{rawScoreText}
       </p>
 
       <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-3">
@@ -2324,8 +2346,17 @@ function WhyBiasSection({
           value={asset?.hasBiasData ? asset?.combinedBias?.bias ?? asset?.bias ?? "Neutral" : "N/A"}
           helper={
             asset?.hasBiasData
-              ? "News score + technical score + cross-asset confluence. Event risk can reduce confidence and increase expected-move risk."
+              ? `Raw model before advanced confluence: news + technical + cross-asset context. Raw Bias Score ${formatScore(asset.rawBiasScore ?? asset.combinedBias?.score)}.`
               : "Combined bias unavailable until deterministic rules are configured for this symbol."
+          }
+        />
+        <BiasContributor
+          label="Expected Move Basis"
+          value={asset?.hasBiasData ? "Confluence" : "N/A"}
+          helper={
+            asset?.hasBiasData
+              ? `Uses normalized Edge Score ${formatScore(asset.expectedMoveBasis?.normalizedConfluenceScore)} with event multiplier ${formatScore(asset.expectedMoveBasis?.eventRiskMultiplier)}.`
+              : "Expected move unavailable for quote-only watchlist symbols."
           }
         />
         <BiasContributor
@@ -3628,8 +3659,10 @@ function getOverallReview(evaluation?: EvaluationDetail): ReviewToneResult {
 
 function explainScore(value?: number | null) {
   if (typeof value !== "number") return "no score loaded";
-  if (value > 1) return "bullish pressure";
-  if (value < -1) return "bearish pressure";
+  if (value > 12) return "strong bullish pressure";
+  if (value > 3) return "bullish pressure";
+  if (value < -12) return "strong bearish pressure";
+  if (value < -3) return "bearish pressure";
   return "neutral or mixed pressure";
 }
 
