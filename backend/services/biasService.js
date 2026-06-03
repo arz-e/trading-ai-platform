@@ -14,6 +14,10 @@ import {
   generateAssetAnalysis,
   summarizeDrivers,
 } from "./aiService.js";
+import { buildConfluenceForAsset } from "./confluenceService.js";
+import { buildMarketFlowSnapshot, flowRowForAsset } from "./flowService.js";
+import { compareNewsToFlow } from "./newsFlowService.js";
+import { buildOptionsPressureSnapshot, optionsPressureForAsset } from "./pressureService.js";
 import { crossAssetAdjustments, scoreToBias, scoreToConfidence } from "../utils/scoring.js";
 import { containsKeyword } from "../utils/textMatching.js";
 
@@ -22,6 +26,8 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
   const eventRisk = computeEventRisk(calendarEvents);
   const sentimentItems = analyzeHeadlineSentiment(news);
   const sentiment = buildSentimentSummary(sentimentItems);
+  const marketFlow = buildMarketFlowSnapshot(market, news, calendarEvents);
+  const optionsPressureSnapshot = buildOptionsPressureSnapshot(Object.keys(assetRules), market);
   const output = {};
 
   for (const asset in assetRules) {
@@ -39,23 +45,10 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
     const movePoints = estimateExpectedMove(asset, price, combined.score, eventRisk);
     const drivers = summarizeDrivers(combined.reasons);
     const sentimentSummary = buildAssetSentimentSummary(asset, sentimentItems);
-    const analysisPayload = buildAnalysisPayload({
-      asset,
-      bias: combined.bias,
-      confidence: combined.confidence,
-      score: combined.score,
-      movePoints,
-      currentPrice: price,
-      atr: null,
-      regime: regime.regime,
-      regimeConfidence: regime.confidence,
-      eventRisk,
-      drivers,
-      sentimentSummary,
-      market,
-    });
-
-    output[asset] = {
+    const flow = flowRowForAsset(marketFlow, asset);
+    const newsFlowRelationship = compareNewsToFlow(news, marketFlow, asset);
+    const optionsPressure = optionsPressureForAsset(optionsPressureSnapshot, asset);
+    const legacyOutput = {
       bias: combined.bias,
       confidence: combined.confidence,
       score: combined.score,
@@ -69,8 +62,56 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       eventRisk,
       drivers,
       sentimentSummary,
+    };
+    const confluence = buildConfluenceForAsset({
+      asset,
+      currentBiasOutput: legacyOutput,
+      marketFlow: flow,
+      newsFlowRelationship,
+      regime,
+      eventRisk,
+      optionsPressure,
+    });
+    const analysisPayload = buildAnalysisPayload({
+      asset,
+      bias: confluence.finalBias,
+      confidence: confluence.confidence,
+      score: combined.score,
+      movePoints,
+      currentPrice: price,
+      atr: null,
+      regime: regime.regime,
+      regimeConfidence: regime.confidence,
+      eventRisk,
+      drivers,
+      sentimentSummary,
+      market,
+    });
+
+    output[asset] = {
+      bias: confluence.finalBias,
+      confidence: confluence.confidence,
+      score: combined.score,
+      movePoints,
+      currentPrice: price,
+      newsBias,
+      technicalBias,
+      combinedBias: combined,
+      regime: regime.regime,
+      regimeConfidence: regime.confidence,
+      eventRisk,
+      drivers,
+      sentimentSummary,
       analysis: generateAssetAnalysis(analysisPayload),
       reasons: combined.reasons.map((reason) => reason.text),
+      flow,
+      newsFlowRelationship,
+      optionsPressure,
+      confluence,
+      trendState: confluence.trendState,
+      edgeScore: confluence.edgeScore,
+      watchReasons: confluence.watchReasons,
+      avoidReasons: confluence.avoidReasons,
       lastUpdated: new Date().toISOString(),
     };
   }
@@ -79,6 +120,8 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
     regime,
     eventRisk,
     sentiment,
+    marketFlow,
+    optionsPressure: optionsPressureSnapshot,
     assets: output,
   };
 }

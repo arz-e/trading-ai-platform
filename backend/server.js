@@ -36,7 +36,11 @@ import {
   buildPostMortem,
 } from "./services/performanceService.js";
 import { buildSystemStatus } from "./services/systemService.js";
+import { buildConfluenceSummary } from "./services/confluenceService.js";
 import { fetchFinnhubQuote, getFinnhubStatus } from "./services/finnhubService.js";
+import { buildMarketFlowSnapshot } from "./services/flowService.js";
+import { compareNewsToFlow } from "./services/newsFlowService.js";
+import { buildOptionsPressureSnapshot } from "./services/pressureService.js";
 import {
   addWatchlistItem,
   disableWatchlistItem,
@@ -85,6 +89,64 @@ app.get("/api/market", async (req, res) => {
   } catch (err) {
     console.error(err.message);
     res.status(500).json({ error: "Failed to fetch market data" });
+  }
+});
+
+app.get("/api/flow", async (req, res) => {
+  try {
+    const [market, news, calendarEvents] = await Promise.all([
+      fetchMarketData(),
+      fetchNewsData(),
+      fetchCalendarEvents(),
+    ]);
+
+    res.json(buildMarketFlowSnapshot(market, news, calendarEvents));
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch market flow proxy" });
+  }
+});
+
+app.get("/api/options-pressure", async (req, res) => {
+  try {
+    const market = await fetchMarketData();
+    res.json(buildOptionsPressureSnapshot(["ES", "NQ", "YM", "GOLD", "DXY", "USOIL"], market));
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch options pressure snapshot" });
+  }
+});
+
+app.get("/api/confluence", async (req, res) => {
+  try {
+    const [market, news, calendarEvents] = await Promise.all([
+      fetchMarketData(),
+      fetchNewsData(),
+      fetchCalendarEvents(),
+    ]);
+    const biasResult = await buildBiasEngine(market, news, calendarEvents);
+    const relationships = Object.fromEntries(
+      Object.keys(biasResult.assets ?? {}).map((asset) => [
+        asset,
+        compareNewsToFlow(news, biasResult.marketFlow, asset),
+      ])
+    );
+
+    res.json({
+      ...buildConfluenceSummary({
+        biasOutput: biasResult.assets,
+        marketFlow: biasResult.marketFlow,
+        newsFlowRelationships: relationships,
+        regime: biasResult.regime,
+        eventRisk: biasResult.eventRisk,
+        optionsPressure: biasResult.optionsPressure,
+      }),
+      marketFlow: biasResult.marketFlow,
+      optionsPressure: biasResult.optionsPressure,
+    });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ error: "Failed to fetch confluence summary" });
   }
 });
 
@@ -322,6 +384,8 @@ app.get("/api/dashboard", async (req, res) => {
       eventRisk: biasResult.eventRisk,
       sentiment: biasResult.sentiment,
       newsImpact,
+      marketFlow: biasResult.marketFlow,
+      optionsPressure: biasResult.optionsPressure,
       generatedAt,
     });
 
@@ -521,6 +585,8 @@ async function buildBiasSnapshot() {
     market,
     regime: biasResult.regime,
     eventRisk: biasResult.eventRisk,
+    marketFlow: biasResult.marketFlow,
+    optionsPressure: biasResult.optionsPressure,
     sentiment: biasResult.sentiment,
     bias: biasResult.assets,
     headlineCount: news.length,
@@ -536,6 +602,8 @@ async function buildBiasSnapshot() {
       market,
       news: newsBundle,
       calendar: calendarBundle,
+      marketFlow: biasResult.marketFlow,
+      optionsPressure: biasResult.optionsPressure,
     },
     generatedAt,
   };

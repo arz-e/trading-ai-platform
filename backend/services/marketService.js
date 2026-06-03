@@ -1,5 +1,6 @@
 import YahooFinance from "yahoo-finance2";
 import { symbols } from "../config/constants.js";
+import { flowAssets } from "../config/flowAssets.js";
 
 const yahoo = new YahooFinance();
 
@@ -8,36 +9,98 @@ const yahoo = new YahooFinance();
  */
 export async function fetchMarketData() {
   const results = {};
+  const quoteTargets = buildQuoteTargets();
 
-  const keys = Object.keys(symbols);
-
-  for (const key of keys) {
-    const symbol = symbols[key];
+  for (const target of quoteTargets) {
+    const symbol = target.providerSymbol;
 
     try {
       const quote = await yahoo.quote(symbol);
-
-      results[key] = {
-        symbol,
-        price: quote?.regularMarketPrice ?? null,
-        change: quote?.regularMarketChange ?? null,
-        percent: quote?.regularMarketChangePercent ?? null,
-        timestamp: normalizeMarketTimestamp(quote?.regularMarketTime),
-      };
+      results[target.id] = normalizeMarketQuote(target, quote);
     } catch (err) {
       console.error(`Market fetch failed for ${symbol}:`, err.message);
 
-      results[key] = {
+      results[target.id] = {
         symbol,
         price: null,
         change: null,
         percent: null,
+        open: null,
+        high: null,
+        low: null,
+        previousClose: null,
+        volume: null,
+        dayRange: null,
+        absoluteChange: null,
+        intradayReturn: null,
+        timestamp: new Date().toISOString(),
+        provider: target.provider,
+        quoteStatus: "ERROR",
+        stale: true,
         error: err.message,
       };
     }
   }
 
   return results;
+}
+
+function buildQuoteTargets() {
+  const targets = Object.entries(symbols).map(([id, providerSymbol]) => ({
+    id,
+    provider: "yahoo",
+    providerSymbol,
+  }));
+  const knownIds = new Set(targets.map((target) => target.id));
+
+  for (const item of flowAssets) {
+    if (knownIds.has(item.id)) continue;
+    knownIds.add(item.id);
+    targets.push({
+      id: item.id,
+      provider: item.provider,
+      providerSymbol: item.providerSymbol,
+    });
+  }
+
+  return targets;
+}
+
+function normalizeMarketQuote(target, quote = {}) {
+  const price = quote?.regularMarketPrice ?? null;
+  const previousClose = quote?.regularMarketPreviousClose ?? null;
+  const open = quote?.regularMarketOpen ?? null;
+  const timestamp = normalizeMarketTimestamp(quote?.regularMarketTime);
+  const absoluteChange = typeof price === "number" && typeof previousClose === "number"
+    ? Number((price - previousClose).toFixed(5))
+    : quote?.regularMarketChange ?? null;
+  const intradayReturn = typeof price === "number" && typeof open === "number" && open !== 0
+    ? Number((((price - open) / open) * 100).toFixed(3))
+    : null;
+
+  return {
+    symbol: target.providerSymbol,
+    price,
+    change: quote?.regularMarketChange ?? absoluteChange,
+    percent: quote?.regularMarketChangePercent ?? null,
+    open,
+    high: quote?.regularMarketDayHigh ?? null,
+    low: quote?.regularMarketDayLow ?? null,
+    previousClose,
+    volume: quote?.regularMarketVolume ?? null,
+    dayRange: buildDayRange(quote?.regularMarketDayLow, quote?.regularMarketDayHigh),
+    absoluteChange,
+    intradayReturn,
+    timestamp,
+    provider: target.provider,
+    quoteStatus: "OK",
+    stale: isStaleTimestamp(timestamp),
+  };
+}
+
+function buildDayRange(low, high) {
+  if (typeof low !== "number" || typeof high !== "number") return null;
+  return `${low} - ${high}`;
 }
 
 /**
@@ -146,4 +209,10 @@ function normalizeMarketTimestamp(value) {
   }
 
   return new Date().toISOString();
+}
+
+function isStaleTimestamp(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return true;
+  return Date.now() - date.getTime() > 30 * 60 * 1000;
 }

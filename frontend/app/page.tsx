@@ -61,6 +61,14 @@ type AssetCard = {
   newsBias?: BiasBreakdown | null;
   technicalBias?: BiasBreakdown | null;
   combinedBias?: BiasBreakdown | null;
+  flow?: FlowRow | null;
+  newsFlowRelationship?: NewsFlowRelationship | null;
+  optionsPressure?: OptionsPressureAsset | null;
+  confluence?: AdvancedConfluence | null;
+  trendState?: string | null;
+  edgeScore?: number | null;
+  watchReasons?: string[];
+  avoidReasons?: string[];
   regime: string | null;
   regimeConfidence: number | null;
   drivers: Driver[];
@@ -74,6 +82,82 @@ type AssetCard = {
   };
   analysis: string;
   lastUpdated?: string;
+};
+
+type FlowRow = {
+  asset: string;
+  displayName: string;
+  providerSymbol: string;
+  riskBucket: string;
+  relatedCoreAssets: string[];
+  price: number | null;
+  change: number | null;
+  percent: number | null;
+  volume?: number | null;
+  flowScore: number;
+  direction: "inflow" | "outflow" | "neutral";
+  strength: "strong" | "moderate" | "weak" | "flat";
+  reasons: string[];
+};
+
+type MarketFlowSnapshot = {
+  generatedAt: string;
+  status: string;
+  riskTone: string;
+  summary: string;
+  rankedFlows: FlowRow[];
+  inflows: FlowRow[];
+  outflows: FlowRow[];
+  contradictions?: Array<{ type?: string; message: string; assets?: string[] }>;
+  dataQuality?: {
+    availableRows: number;
+    totalRows: number;
+    staleRows: number;
+    status: string;
+  };
+};
+
+type NewsFlowRelationship = {
+  relationship: string;
+  confidence: number;
+  confirmingHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  contradictingHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  explanatoryHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  unrelatedHeadlines?: Array<{ title: string; source?: string; pubDate?: string }>;
+  reasons?: string[];
+};
+
+type OptionsPressureAsset = {
+  asset: string;
+  status: string;
+  pressureState: string;
+  trendImpact: string;
+  reason: string;
+};
+
+type OptionsPressureSnapshot = {
+  generatedAt: string;
+  status: string;
+  summary: string;
+  assets: OptionsPressureAsset[];
+};
+
+type AdvancedConfluence = {
+  asset: string;
+  finalBias: string;
+  confidence: number;
+  edgeScore: number;
+  trendState: string;
+  flowAlignment: string;
+  newsAlignment: string;
+  macroAlignment: string;
+  optionsPressureAlignment: string;
+  eventRiskAdjustment?: { score: number; level: string; reasons?: string[] };
+  components: Array<{ key: string; label: string; weight: number; score: number }>;
+  contradictions: string[];
+  watchReasons: string[];
+  avoidReasons: string[];
+  reasons: string[];
 };
 
 type Briefing = {
@@ -96,6 +180,8 @@ type FlashNewsItem = {
 
 type DashboardResponse = {
   generatedAt: string;
+  marketFlow?: MarketFlowSnapshot;
+  optionsPressure?: OptionsPressureSnapshot;
   regime?: {
     regime: string;
     confidence: number;
@@ -294,6 +380,9 @@ type SymbolSearchResponse = {
 type GroupedAsset = AssetCard & {
   symbol: string;
   name: string;
+  currentPrice?: number;
+  reasons?: string[];
+  lastUpdated?: string;
   changePercent: number | null;
   quoteStatus?: string;
   isCustom: boolean;
@@ -308,6 +397,7 @@ type GroupedAsset = AssetCard & {
   dayRange?: string | null;
   quoteTimestamp?: string;
   quoteError?: string | null;
+  watchlistId?: number;
 };
 
 type CalendarEvent = {
@@ -584,13 +674,44 @@ export default function Home() {
         body: JSON.stringify(result),
       });
       const data: { item?: WatchlistItem; error?: string } = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to add symbol");
+      if (!res.ok) {
+        const message = data.error ?? "Failed to add symbol";
+        if (res.status === 409 || message.toLowerCase().includes("watchlist item already exists")) {
+          setWatchlistMessage(`${result.symbol} is already in your watchlist.`);
+          await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
+          return;
+        }
+        throw new Error(message);
+      }
       setWatchlistMessage(`Added ${data.item?.symbol ?? result.symbol} to watchlist.`);
       setSymbolResults([]);
       await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
     } catch (err) {
       console.error(err);
       setWatchlistMessage(err instanceof Error ? err.message : "Could not add symbol.");
+    }
+  }
+
+  async function removeWatchlistItem(asset: GroupedAsset) {
+    if (!asset.watchlistId || !asset.isCustom) return;
+    setWatchlistMessage(`Removing ${asset.symbol}...`);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/watchlist/${asset.watchlistId}`, {
+        method: "DELETE",
+      });
+      const data: { error?: string } = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to remove symbol");
+
+      setWatchlistMessage(`Removed ${asset.symbol} from watchlist.`);
+      await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
+
+      if (selected === asset.symbol) {
+        setSelected(assetOrder[0]);
+      }
+    } catch (err) {
+      console.error(err);
+      setWatchlistMessage(err instanceof Error ? err.message : "Could not remove symbol.");
     }
   }
 
@@ -883,6 +1004,11 @@ export default function Home() {
 
         <DataSourceHealthCard systemStatus={systemStatus} />
 
+        <MarketFlowProxyCard
+          marketFlow={dashboard?.marketFlow}
+          headlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
+        />
+
         <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
@@ -1104,9 +1230,17 @@ export default function Home() {
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               {groupedAssets.map((item) => (
-                <button
+                <div
                   key={item.symbol}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelected(item.symbol)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelected(item.symbol);
+                    }
+                  }}
                   className={`rounded-2xl border p-5 text-left shadow-lg transition ${
                     selected === item.symbol
                       ? "border-cyan-500 bg-[#131c2f]"
@@ -1128,6 +1262,21 @@ export default function Home() {
                       {item.hasBiasData ? item.bias : "Quote only"}
                     </span>
                   </div>
+
+                  {item.isCustom && item.watchlistId ? (
+                    <div className="mt-3 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeWatchlistItem(item);
+                        }}
+                        className="rounded-lg border border-red-900/70 bg-red-950/20 px-2.5 py-1 text-xs font-semibold text-red-200 transition hover:border-red-500"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
 
                   <div className="mt-5">
                     <p className="text-3xl font-bold">
@@ -1162,7 +1311,7 @@ export default function Home() {
                       {formatExpectedMoveValue(item)}
                     </span>
                   </div>
-                </button>
+                </div>
               ))}
             </div>
 
@@ -1219,6 +1368,10 @@ export default function Home() {
                   eventRisk={dashboard?.eventRisk}
                   topHeadlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
                 />
+
+                {selectedAsset?.hasBiasData ? (
+                  <AdvancedConfluencePanel asset={selectedAsset} />
+                ) : null}
 
                 {!selectedAsset?.hasBiasData ? (
                   <QuoteOnlyDetailsPanel asset={selectedAsset} />
@@ -1686,6 +1839,12 @@ function WatchlistSearchBar({
   onRefresh: () => void;
 }) {
   const enabledCount = watchlist.filter((item) => item.enabled).length;
+  const enabledKeys = new Set(
+    watchlist
+      .filter((item) => item.enabled)
+      .flatMap((item) => [normalizeAssetKey(item.symbol), normalizeAssetKey(item.providerSymbol)])
+      .filter(Boolean)
+  );
 
   return (
     <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
@@ -1732,29 +1891,179 @@ function WatchlistSearchBar({
 
       {symbolResults.length > 0 ? (
         <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
-          {symbolResults.map((result) => (
-            <div
-              key={`${result.provider}-${result.providerSymbol}`}
-              className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-gray-100">{result.displayName}</p>
-                <p className="mt-1 text-xs text-gray-500">
-                  {result.symbol} | {result.provider} | {result.assetClass}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onAdd(result)}
-                className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500"
+          {symbolResults.map((result) => {
+            const alreadyEnabled =
+              enabledKeys.has(normalizeAssetKey(result.symbol)) ||
+              enabledKeys.has(normalizeAssetKey(result.providerSymbol));
+
+            return (
+              <div
+                key={`${result.provider}-${result.providerSymbol}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2"
               >
-                Add
-              </button>
-            </div>
-          ))}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-100">{result.displayName}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {result.symbol} | {result.provider} | {result.assetClass}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onAdd(result)}
+                  disabled={alreadyEnabled}
+                  className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-500"
+                >
+                  {alreadyEnabled ? "Added" : "Add"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function MarketFlowProxyCard({
+  marketFlow,
+  headlines,
+}: {
+  marketFlow?: MarketFlowSnapshot;
+  headlines: FlashNewsItem[];
+}) {
+  const rankedRows = (marketFlow?.rankedFlows ?? []).length
+    ? [...(marketFlow?.rankedFlows ?? [])].sort((a, b) => b.flowScore - a.flowScore)
+    : [...(marketFlow?.inflows ?? []), ...(marketFlow?.outflows ?? [])].sort((a, b) => b.flowScore - a.flowScore);
+  const contextHeadlines = getFlowContextHeadlines(headlines);
+
+  return (
+    <section className="mb-6 overflow-hidden rounded-2xl border border-gray-800 bg-[#111827]">
+      <div className="border-b border-gray-800 bg-[#0d1423]/70 p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Flow Proxy</p>
+            <h2 className="mt-2 text-xl font-semibold capitalize">
+              {marketFlow?.riskTone?.replaceAll("_", " ") ?? "Loading flow context"}
+            </h2>
+            <p className="mt-2 max-w-4xl text-sm leading-6 text-gray-400">
+              {marketFlow?.summary ?? "Comparing proxy moves across risk assets, safe havens, dollar, rates, energy, and volatility."}
+            </p>
+          </div>
+          <StatusPill status={marketFlow?.status ?? "UNKNOWN"} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-0 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <FlowDashboard rows={rankedRows} />
+        <FlowContextNewsPanel headlines={contextHeadlines} />
+      </div>
+    </section>
+  );
+}
+
+function FlowDashboard({ rows }: { rows: FlowRow[] }) {
+  const visibleRows = rows.slice(0, 14);
+
+  return (
+    <div className="p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-100">Ranked Proxy Pressure</h3>
+          <p className="mt-1 text-xs text-gray-500">Negative pressure points left. Positive pressure points right.</p>
+        </div>
+        <div className="hidden items-center gap-3 text-[11px] text-gray-500 sm:flex">
+          <span className="text-red-300">Outflow</span>
+          <span className="h-px w-8 bg-gray-700" />
+          <span className="text-green-300">Inflow</span>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-gray-800 bg-[#0b1220]">
+        <div className="hidden grid-cols-[86px_74px_minmax(180px,1fr)_64px] border-b border-gray-800 bg-[#111827]/70 px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-gray-500 md:grid">
+          <span>Symbol</span>
+          <span>Direction</span>
+          <span>Pressure</span>
+          <span className="text-right">Score</span>
+        </div>
+        <div className="divide-y divide-gray-800/80">
+          {visibleRows.map((row) => (
+            <FlowPressureRow key={`flow-row-${row.asset}`} row={row} />
+          ))}
+          {visibleRows.length === 0 ? (
+            <p className="px-3 py-4 text-sm text-gray-400">
+              Market flow proxy rows are still loading.
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FlowPressureRow({ row }: { row: FlowRow }) {
+  const isNeutral = row.direction === "neutral" || row.flowScore === 0;
+  const isPositive = !isNeutral && (row.flowScore > 0 || row.direction === "inflow");
+  const width = `${Math.min(100, Math.abs(row.flowScore))}%`;
+  const directionLabel = row.direction === "inflow" ? "Inflow" : row.direction === "outflow" ? "Outflow" : "Neutral";
+  const reason = row.reasons?.[0];
+  const directionClass = isNeutral ? "text-gray-300" : isPositive ? "text-green-300" : "text-red-300";
+
+  return (
+    <div
+      className="relative grid grid-cols-[72px_74px_minmax(120px,1fr)_58px] items-center gap-2 px-3 py-1.5 transition hover:bg-[#111827]/75 md:grid-cols-[86px_74px_minmax(180px,1fr)_64px]"
+      title={reason}
+    >
+      <span className="text-xs font-semibold text-gray-100">{row.asset}</span>
+      <span className={`text-xs font-semibold ${directionClass}`}>{directionLabel}</span>
+
+      <div>
+        <div className="grid grid-cols-2 gap-0">
+          <div className="flex h-2 items-center justify-end rounded-l-full bg-gray-800/80">
+            {!isPositive && !isNeutral ? <div className="h-2 rounded-l-full bg-red-400 shadow-[0_0_10px_rgba(248,113,113,0.25)]" style={{ width }} /> : null}
+          </div>
+          <div className="flex h-2 items-center rounded-r-full bg-gray-800/80">
+            {isPositive ? <div className="h-2 rounded-r-full bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.25)]" style={{ width }} /> : null}
+          </div>
+        </div>
+      </div>
+
+      <p className={`text-sm font-semibold md:text-right ${getSignedValueColor(row.flowScore)}`}>{formatScore(row.flowScore)}</p>
+    </div>
+  );
+}
+
+function FlowContextNewsPanel({ headlines }: { headlines: FlashNewsItem[] }) {
+  return (
+    <aside className="border-t border-gray-800 bg-[#0b1220] p-4 xl:border-l xl:border-t-0">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-100">News vs Flow</h3>
+          <p className="mt-1 text-xs text-gray-500">Context only, not AI analysis.</p>
+        </div>
+        <span className="rounded-lg border border-gray-800 bg-[#111827] px-2 py-1 text-[11px] font-semibold text-gray-400">
+          Context
+        </span>
+      </div>
+
+      <div className="dark-scrollbar mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+        {headlines.length > 0 ? (
+          headlines.slice(0, 6).map((headline, index) => (
+            <div key={`${headline.title}-${index}`} className="rounded-lg border border-gray-800 bg-[#111827] px-3 py-2">
+              <p className="line-clamp-2 text-sm font-semibold leading-5 text-gray-100">{headline.title}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500">
+                <span>{headline.source}</span>
+                <span>{headline.category}</span>
+                <span className={getImpactTextColor(headline.impactLabel)}>{headline.impactLabel}</span>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="rounded-lg border border-gray-800 bg-[#111827] p-3 text-sm leading-6 text-gray-400">
+            No clear flow-related news context detected.
+          </p>
+        )}
+      </div>
+    </aside>
   );
 }
 
@@ -1841,6 +2150,83 @@ function QuoteOnlyDetailsPanel({ asset }: { asset: GroupedAsset | null }) {
           {asset.quoteError}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function AdvancedConfluencePanel({ asset }: { asset: GroupedAsset }) {
+  const confluence = asset.confluence;
+  const optionsMessage =
+    asset.optionsPressure?.status === "OK"
+      ? `${asset.optionsPressure.pressureState} / ${asset.optionsPressure.trendImpact}`
+      : "Options pressure unavailable. Using flow/news/macro confluence only.";
+
+  return (
+    <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Advanced Confluence</p>
+          <h3 className="mt-2 text-xl font-semibold">
+            Trend State: {asset.trendState?.replaceAll("_", " ") ?? confluence?.trendState?.replaceAll("_", " ") ?? "neutral"}
+          </h3>
+          <p className="mt-2 text-sm text-gray-400">
+            Edge Score: {formatScore(asset.edgeScore ?? confluence?.edgeScore)} | News vs Flow: {asset.newsFlowRelationship?.relationship?.replaceAll("_", " ") ?? "--"}
+          </p>
+        </div>
+        <BiasPill bias={confluence?.finalBias ?? asset.bias} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <BiasContributor
+          label="Market Flow"
+          value={asset.flow?.direction ?? "neutral"}
+          helper={`${asset.flow?.strength ?? "flat"} | score ${formatScore(asset.flow?.flowScore)}`}
+        />
+        <BiasContributor
+          label="News vs Flow"
+          value={asset.newsFlowRelationship?.relationship?.replaceAll("_", " ") ?? "insufficient data"}
+          helper={`${formatScore(asset.newsFlowRelationship?.confidence)}% relationship confidence`}
+        />
+        <BiasContributor label="Options Pressure" value={asset.optionsPressure?.status ?? "UNAVAILABLE"} helper={optionsMessage} />
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="rounded-xl border border-gray-800 bg-[#111827] p-4">
+          <h4 className="text-sm font-semibold text-gray-100">Confluence Breakdown</h4>
+          <div className="mt-3 space-y-2">
+            {(confluence?.components ?? []).map((component) => (
+              <div key={component.key} className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-gray-300">{component.label}</span>
+                <span className="text-xs text-gray-500">
+                  {formatScore(component.score)} / {component.weight}
+                </span>
+              </div>
+            ))}
+            {(confluence?.components ?? []).length === 0 ? (
+              <p className="text-sm text-gray-400">No confluence components loaded.</p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-1">
+          <ReasonList title="Watch Reasons" reasons={asset.watchReasons ?? confluence?.watchReasons ?? []} />
+          <ReasonList title="Avoid Reasons" reasons={asset.avoidReasons ?? confluence?.avoidReasons ?? []} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReasonList({ title, reasons }: { title: string; reasons: string[] }) {
+  return (
+    <div className="rounded-xl border border-gray-800 bg-[#111827] p-4">
+      <h4 className="text-sm font-semibold text-gray-100">{title}</h4>
+      <div className="mt-3 space-y-2">
+        {reasons.slice(0, 5).map((reason, index) => (
+          <p key={`${title}-${index}`} className="text-xs leading-5 text-gray-400">{reason}</p>
+        ))}
+        {reasons.length === 0 ? <p className="text-sm text-gray-400">None logged.</p> : null}
+      </div>
     </div>
   );
 }
@@ -2158,8 +2544,8 @@ function UpcomingNewsView({
         <MetricCard label="Average Impact" value={newsImpact?.summary?.topAverageImpact ?? "--"} helper="top headline sample" />
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-12">
-        <section className="rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-7">
+      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12 xl:[height:calc(100vh-220px)] xl:min-h-[520px]">
+        <section className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-xl font-semibold">Economic Calendar</h2>
@@ -2200,7 +2586,7 @@ function UpcomingNewsView({
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="dark-scrollbar mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {filteredEvents.length > 0 ? (
               filteredEvents.slice(0, 30).map((event, index) => (
                 <CalendarEventRow
@@ -2224,7 +2610,7 @@ function UpcomingNewsView({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-5">
+        <section className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-5">
           <div className="flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold">Market Headlines</h2>
@@ -2233,7 +2619,7 @@ function UpcomingNewsView({
             <StatusPill status={isDataDegraded(systemStatus) ? "DEGRADED" : "OK"} />
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="dark-scrollbar mt-5 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {headlines.length > 0 ? (
               headlines.slice(0, 14).map((item, index) => (
                 <HeadlineImpactRow key={`${item.title}-${index}`} item={item} />
@@ -2280,29 +2666,6 @@ function EvaluationsView({
   const filtersActive = assetFilter !== "ALL" || verdictFilter !== "ALL";
   const selectedIndex = Math.max(0, rows.findIndex((row) => row.id === selectedEvaluationId));
   const selectedRow = rows[selectedIndex] ?? rows[0] ?? null;
-  const selectedReviewRef = useRef<HTMLElement | null>(null);
-  const [queuePanelHeight, setQueuePanelHeight] = useState<number | null>(null);
-
-  useEffect(() => {
-    const element = selectedReviewRef.current;
-    if (!element) return;
-
-    function updateHeight() {
-      const nextHeight = element?.getBoundingClientRect().height ?? 0;
-      setQueuePanelHeight(nextHeight > 0 ? nextHeight : null);
-    }
-
-    updateHeight();
-
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(element);
-    window.addEventListener("resize", updateHeight);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateHeight);
-    };
-  }, [selectedRow?.id, postMortem?.id, rows.length]);
 
   function selectByOffset(offset: number) {
     if (!rows.length) return;
@@ -2346,10 +2709,9 @@ function EvaluationsView({
         />
       </div>
 
-      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12">
+      <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-12 xl:[height:calc(100vh-220px)] xl:min-h-[560px]">
         <section
           className="flex min-h-0 flex-col rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-4"
-          style={queuePanelHeight ? { height: queuePanelHeight } : undefined}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -2462,8 +2824,7 @@ function EvaluationsView({
         </section>
 
         <section
-          ref={selectedReviewRef}
-          className="flex min-h-0 rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-8"
+          className="dark-scrollbar flex min-h-0 overflow-y-auto rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-8"
         >
           {selectedRow ? (
             <SelectedEvaluationPanel row={selectedRow} postMortem={postMortem} />
@@ -2983,7 +3344,7 @@ function buildLinePath(values: number[], width: number, height: number) {
 }
 
 function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: WatchlistQuote[]): GroupedAsset[] {
-  const coreSymbols = new Set(defaultAssets.map((asset) => asset.asset));
+  const coreSymbols = new Set(defaultAssets.map((asset) => normalizeAssetKey(asset.asset)));
   const normalizedDefault = defaultAssets.map((asset) => ({
     ...asset,
     symbol: asset.asset,
@@ -2994,71 +3355,83 @@ function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: Watchli
     hasBiasData: true,
     assetClass: "bias-asset",
   }));
-  const customQuotes = watchlistQuotes
-    .filter((quote) => quote.symbol && !coreSymbols.has(quote.symbol))
-    .map((quote) => {
-      const technicalSnapshot = {
-        price: quote.price ?? 0,
-        change: quote.change ?? 0,
-        percent: quote.percent ?? 0,
-        open: quote.open ?? 0,
-        high: quote.high ?? 0,
-        low: quote.low ?? 0,
-        previousClose: quote.previousClose ?? 0,
-      };
+  const customQuoteMap = new Map<string, GroupedAsset>();
 
-      return {
-        asset: quote.symbol,
-        symbol: quote.symbol,
-        name: quote.displayName || quote.symbol,
-        price: quote.price,
-        change: quote.change,
-        percent: quote.percent,
-        changePercent: quote.percent,
+  watchlistQuotes.forEach((quote) => {
+    const symbolKey = normalizeAssetKey(quote.symbol);
+    const providerKey = normalizeAssetKey(quote.providerSymbol);
+    if (!symbolKey || coreSymbols.has(symbolKey) || (providerKey && coreSymbols.has(providerKey))) return;
+
+    const dedupeKey = symbolKey || providerKey;
+    if (!dedupeKey || customQuoteMap.has(dedupeKey)) return;
+
+    const technicalSnapshot = {
+      price: quote.price ?? 0,
+      change: quote.change ?? 0,
+      percent: quote.percent ?? 0,
+      open: quote.open ?? 0,
+      high: quote.high ?? 0,
+      low: quote.low ?? 0,
+      previousClose: quote.previousClose ?? 0,
+    };
+
+    customQuoteMap.set(dedupeKey, {
+      asset: quote.symbol,
+      symbol: quote.symbol,
+      name: quote.displayName || quote.symbol,
+      price: quote.price,
+      change: quote.change,
+      percent: quote.percent,
+      changePercent: quote.percent,
+      bias: "N/A",
+      confidence: 0,
+      score: 0,
+      movePoints: 0,
+      currentPrice: quote.price ?? 0,
+      newsBias: null,
+      technicalBias: {
         bias: "N/A",
         confidence: 0,
         score: 0,
-        movePoints: 0,
-        currentPrice: quote.price ?? 0,
-        newsBias: null,
-        technicalBias: {
-          bias: "N/A",
-          confidence: 0,
-          score: 0,
-          reasons: [
-            {
-              text: `${quote.symbol} has quote data only. Deterministic bias rules are not configured for this symbol yet.`,
-              direction: "neutral",
-              weight: 0,
-            },
-          ],
-          snapshot: technicalSnapshot,
-        },
-        combinedBias: null,
-        regime: null,
-        regimeConfidence: null,
-        drivers: [],
-        eventRisk: undefined,
-        analysis: "Bias analysis unavailable for this watchlist symbol.",
-        reasons: [],
-        lastUpdated: quote.timestamp,
-        quoteStatus: quote.quoteStatus ?? quote.status,
-        isCustom: true,
-        hasBiasData: false,
-        provider: quote.provider,
-        providerSymbol: quote.providerSymbol,
-        assetClass: quote.assetClass,
-        open: quote.open,
-        high: quote.high,
-        low: quote.low,
-        previousClose: quote.previousClose,
-        dayRange: quote.dayRange,
-        quoteTimestamp: quote.timestamp,
-        quoteError: quote.error,
-      };
+        reasons: [
+          {
+            text: `${quote.symbol} has quote data only. Deterministic bias rules are not configured for this symbol yet.`,
+            direction: "neutral",
+            weight: 0,
+          },
+        ],
+        snapshot: technicalSnapshot,
+      },
+      combinedBias: null,
+      regime: null,
+      regimeConfidence: null,
+      drivers: [],
+      eventRisk: undefined,
+      analysis: "Bias analysis unavailable for this watchlist symbol.",
+      reasons: [],
+      lastUpdated: quote.timestamp,
+      quoteStatus: quote.quoteStatus ?? quote.status,
+      isCustom: true,
+      hasBiasData: false,
+      provider: quote.provider,
+      providerSymbol: quote.providerSymbol,
+      assetClass: quote.assetClass,
+      open: quote.open,
+      high: quote.high,
+      low: quote.low,
+      previousClose: quote.previousClose,
+      dayRange: quote.dayRange,
+      quoteTimestamp: quote.timestamp,
+      quoteError: quote.error,
+      watchlistId: quote.id,
     });
+  });
 
-  return [...normalizedDefault, ...customQuotes];
+  return [...normalizedDefault, ...customQuoteMap.values()];
+}
+
+function normalizeAssetKey(value?: string | null) {
+  return (value ?? "").trim().toUpperCase();
 }
 
 function formatShortTime(value: string) {
@@ -3184,6 +3557,46 @@ function getHeadlineImpactClass(value?: string) {
   if (value === "HIGH") return "text-orange-300 bg-orange-900/30 border-orange-700";
   if (value === "MEDIUM") return "text-yellow-300 bg-yellow-900/20 border-yellow-700";
   return "text-gray-300 bg-gray-800 border-gray-700";
+}
+
+function getImpactTextColor(value?: string) {
+  if (value === "EXTREME") return "text-red-300";
+  if (value === "HIGH") return "text-orange-300";
+  if (value === "MEDIUM") return "text-yellow-300";
+  return "text-gray-400";
+}
+
+function getFlowContextHeadlines(headlines: FlashNewsItem[]) {
+  const flowTerms = [
+    "dollar",
+    "dxy",
+    "yield",
+    "treasury",
+    "fed",
+    "rate",
+    "inflation",
+    "cpi",
+    "jobs",
+    "oil",
+    "energy",
+    "gold",
+    "safe haven",
+    "volatility",
+    "vix",
+    "risk-off",
+    "risk on",
+    "equity",
+    "stocks",
+    "tech",
+    "nasdaq",
+  ];
+
+  return headlines
+    .filter((headline) => {
+      const searchable = `${headline.title} ${headline.category} ${headline.source}`.toLowerCase();
+      return flowTerms.some((term) => searchable.includes(term));
+    })
+    .sort((a, b) => b.impactScore - a.impactScore);
 }
 
 function getDirectionResult(evaluation?: EvaluationDetail): ReviewToneResult {

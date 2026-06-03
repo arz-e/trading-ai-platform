@@ -11,6 +11,8 @@ export function buildDashboardSnapshot({
   eventRisk = null,
   sentiment = null,
   newsImpact = null,
+  marketFlow = null,
+  optionsPressure = null,
   generatedAt = null,
 }) {
   const assets = Object.keys(bias).map((asset) => {
@@ -31,6 +33,14 @@ export function buildDashboardSnapshot({
       newsBias: assetBias.newsBias ?? null,
       technicalBias: assetBias.technicalBias ?? null,
       combinedBias: assetBias.combinedBias ?? null,
+      flow: assetBias.flow ?? null,
+      newsFlowRelationship: assetBias.newsFlowRelationship ?? null,
+      optionsPressure: assetBias.optionsPressure ?? null,
+      confluence: assetBias.confluence ?? null,
+      trendState: assetBias.trendState ?? null,
+      edgeScore: assetBias.edgeScore ?? null,
+      watchReasons: assetBias.watchReasons ?? [],
+      avoidReasons: assetBias.avoidReasons ?? [],
 
       regime: assetBias.regime ?? regime?.regime ?? null,
       regimeConfidence: assetBias.regimeConfidence ?? regime?.confidence ?? null,
@@ -59,6 +69,10 @@ export function buildDashboardSnapshot({
     sentimentSummary: buildCompactSentimentSummary(sentiment),
 
     newsImpactSummary: buildCompactNewsImpactSummary(newsImpact),
+
+    marketFlow,
+
+    optionsPressure,
 
     assets,
   };
