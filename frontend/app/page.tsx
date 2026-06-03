@@ -674,7 +674,15 @@ export default function Home() {
         body: JSON.stringify(result),
       });
       const data: { item?: WatchlistItem; error?: string } = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to add symbol");
+      if (!res.ok) {
+        const message = data.error ?? "Failed to add symbol";
+        if (res.status === 409 || message.toLowerCase().includes("watchlist item already exists")) {
+          setWatchlistMessage(`${result.symbol} is already in your watchlist.`);
+          await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
+          return;
+        }
+        throw new Error(message);
+      }
       setWatchlistMessage(`Added ${data.item?.symbol ?? result.symbol} to watchlist.`);
       setSymbolResults([]);
       await Promise.all([fetchWatchlist(), fetchWatchlistQuotes(), fetchSystemStatus()]);
@@ -1831,6 +1839,12 @@ function WatchlistSearchBar({
   onRefresh: () => void;
 }) {
   const enabledCount = watchlist.filter((item) => item.enabled).length;
+  const enabledKeys = new Set(
+    watchlist
+      .filter((item) => item.enabled)
+      .flatMap((item) => [normalizeAssetKey(item.symbol), normalizeAssetKey(item.providerSymbol)])
+      .filter(Boolean)
+  );
 
   return (
     <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
@@ -1877,26 +1891,33 @@ function WatchlistSearchBar({
 
       {symbolResults.length > 0 ? (
         <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
-          {symbolResults.map((result) => (
-            <div
-              key={`${result.provider}-${result.providerSymbol}`}
-              className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2"
-            >
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-gray-100">{result.displayName}</p>
-                <p className="mt-1 text-xs text-gray-500">
-                  {result.symbol} | {result.provider} | {result.assetClass}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onAdd(result)}
-                className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500"
+          {symbolResults.map((result) => {
+            const alreadyEnabled =
+              enabledKeys.has(normalizeAssetKey(result.symbol)) ||
+              enabledKeys.has(normalizeAssetKey(result.providerSymbol));
+
+            return (
+              <div
+                key={`${result.provider}-${result.providerSymbol}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-gray-800 bg-[#0d1423] px-3 py-2"
               >
-                Add
-              </button>
-            </div>
-          ))}
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-100">{result.displayName}</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    {result.symbol} | {result.provider} | {result.assetClass}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onAdd(result)}
+                  disabled={alreadyEnabled}
+                  className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-500"
+                >
+                  {alreadyEnabled ? "Added" : "Add"}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </section>
