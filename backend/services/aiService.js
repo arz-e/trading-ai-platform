@@ -119,7 +119,11 @@ export function generateAssetAnalysis(payload) {
     marketContext,
   } = payload;
 
-  const opening = `${asset} is biased ${String(bias).toLowerCase()} with ${confidence}% confidence, with an estimated move of ${movePoints} points/units.`;
+  const rangeText =
+    typeof movePoints === "number"
+      ? `The 14-session ATR range for the next trading session is ${movePoints} points/units.`
+      : "A market-derived ATR range is unavailable for this asset right now.";
+  const opening = `${asset} is biased ${String(bias).toLowerCase()} with ${confidence}% confidence. ${rangeText}`;
 
   const macroSentence = `The current macro regime is ${formatLabel(regime)} (${regimeConfidence}% confidence), with VIX at ${marketContext?.VIX ?? "n/a"}, US10Y at ${marketContext?.US10Y ?? "n/a"}, and DXY at ${marketContext?.DXY ?? "n/a"}.`;
 

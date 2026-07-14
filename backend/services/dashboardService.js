@@ -13,6 +13,8 @@ export function buildDashboardSnapshot({
   newsImpact = null,
   marketFlow = null,
   optionsPressure = null,
+  atrSnapshots = null,
+  sessionContext = null,
   generatedAt = null,
 }) {
   const assets = Object.keys(bias).map((asset) => {
@@ -26,16 +28,18 @@ export function buildDashboardSnapshot({
       change: assetMarket.change ?? null,
       percent: assetMarket.percent ?? null,
 
-      bias: assetBias.bias ?? "Neutral",
+      bias: assetBias.bias ?? "Ranging",
       confidence: assetBias.confidence ?? 0,
       score: assetBias.score ?? 0,
       displayScore: assetBias.displayScore ?? assetBias.score ?? 0,
       rawBiasScore: assetBias.rawBiasScore ?? assetBias.combinedBias?.score ?? null,
       legacyScore: assetBias.legacyScore ?? assetBias.rawBiasScore ?? assetBias.combinedBias?.score ?? null,
       confluenceScore: assetBias.confluenceScore ?? assetBias.edgeScore ?? assetBias.confluence?.edgeScore ?? null,
-      movePoints: assetBias.movePoints ?? 0,
+      movePoints: assetBias.movePoints ?? null,
       rawMovePoints: assetBias.rawMovePoints ?? null,
       expectedMoveBasis: assetBias.expectedMoveBasis ?? null,
+      expectedMoveAvailable:
+        assetBias.expectedMoveAvailable ?? typeof assetBias.movePoints === "number",
       newsBias: assetBias.newsBias ?? null,
       technicalBias: assetBias.technicalBias ?? null,
       combinedBias: assetBias.combinedBias ?? null,
@@ -44,6 +48,11 @@ export function buildDashboardSnapshot({
       optionsPressure: assetBias.optionsPressure ?? null,
       confluence: assetBias.confluence ?? null,
       trendState: assetBias.trendState ?? null,
+      sessionProjection: assetBias.sessionProjection ?? null,
+      reversal: assetBias.reversal ?? null,
+      gex: assetBias.gex ?? null,
+      cvd: assetBias.cvd ?? null,
+      confluenceBreakdown: assetBias.confluenceBreakdown ?? assetBias.confluence?.confluenceBreakdown ?? null,
       edgeScore: assetBias.edgeScore ?? null,
       watchReasons: assetBias.watchReasons ?? [],
       avoidReasons: assetBias.avoidReasons ?? [],
@@ -79,6 +88,10 @@ export function buildDashboardSnapshot({
     marketFlow,
 
     optionsPressure,
+
+    atrSnapshots,
+
+    sessionContext,
 
     assets,
   };

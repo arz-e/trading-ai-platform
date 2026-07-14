@@ -9,6 +9,9 @@ import {
   updateWatchlistItem,
 } from "./dbService.js";
 import { fetchFinnhubQuote, getFinnhubStatus, searchFinnhubSymbols } from "./finnhubService.js";
+import { fetchMarketStructureInput } from "./marketStructureDataService.js";
+import { analyzeCvd } from "./cvdService.js";
+import { analyzeGex } from "./gexService.js";
 
 const yahoo = new YahooFinance();
 const YAHOO_QUOTE_CACHE_TTL_MS = 45 * 1000;
@@ -24,14 +27,35 @@ export {
 
 export async function fetchWatchlistQuotes() {
   const items = await getWatchlistItems({ includeDisabled: false });
-  const quotes = [];
-
-  for (const item of items) {
+  const coreSymbols = new Set(coreWatchlistItems.map((item) => item.symbol));
+  const quotes = await Promise.all(items.map(async (item) => {
     const quote = item.provider === "finnhub"
       ? await fetchFinnhubQuote(item.providerSymbol)
       : await fetchYahooWatchlistQuote(item.providerSymbol);
+    const isCoreAsset = coreSymbols.has(item.symbol);
+    const structureInput = isCoreAsset
+      ? null
+      : await fetchMarketStructureInput({
+          ticker: item.symbol,
+          providerSymbol: item.providerSymbol,
+          assetClass: item.assetClass,
+        });
+    const cvd = structureInput
+      ? analyzeCvd({
+          ticker: item.symbol,
+          candles: structureInput.candleData?.candles ?? [],
+          stale: Boolean(structureInput.candleData?.stale),
+        })
+      : null;
+    const gex = structureInput
+      ? analyzeGex({
+          ticker: item.symbol,
+          spotPrice: quote.price,
+          optionsData: structureInput.optionsData,
+        })
+      : null;
 
-    quotes.push({
+    return {
       id: item.id,
       symbol: item.symbol,
       displayName: item.displayName,
@@ -40,8 +64,10 @@ export async function fetchWatchlistQuotes() {
       providerSymbol: item.providerSymbol,
       quoteStatus: quote.status,
       ...quote,
-    });
-  }
+      gex,
+      cvd,
+    };
+  }));
 
   return {
     count: quotes.length,

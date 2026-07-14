@@ -4,10 +4,11 @@ dotenv.config();
 import express from "express";
 import cors from "cors";
 
-import { PORT } from "./config/constants.js";
+import { dashboardAssets, PORT, symbols } from "./config/constants.js";
 import { fetchMarketData } from "./services/marketService.js";
 import { fetchNewsBundle, fetchNewsData } from "./services/newsService.js";
 import { buildBiasEngine } from "./services/biasService.js";
+import { fetchAtrSnapshotsForAssets } from "./services/atrService.js";
 import {
   fetchCalendarBundle,
   fetchCalendarEvents,
@@ -41,6 +42,8 @@ import { fetchFinnhubQuote, getFinnhubStatus } from "./services/finnhubService.j
 import { buildMarketFlowSnapshot } from "./services/flowService.js";
 import { compareNewsToFlow } from "./services/newsFlowService.js";
 import { buildOptionsPressureSnapshot } from "./services/pressureService.js";
+import { buildSessionContext } from "./services/sessionService.js";
+import { fetchMarketStructureInputs } from "./services/marketStructureDataService.js";
 import {
   addWatchlistItem,
   disableWatchlistItem,
@@ -54,11 +57,19 @@ const app = express();
 const startedAt = Date.now();
 
 let latestBiasRun = null;
+const expectedMoveSymbols = Object.fromEntries(
+  dashboardAssets.map((asset) => [asset, symbols[asset]])
+);
+const marketStructureTargets = dashboardAssets.map((asset) => ({
+  ticker: asset,
+  providerSymbol: symbols[asset],
+  assetClass: ["ES", "NQ", "YM", "GOLD", "USOIL"].includes(asset) ? "futures" : "index",
+}));
 
 app.use(cors());
 app.use(express.json());
 
-initDb();
+await initDb();
 
 app.get("/", (req, res) => {
   res.json({
@@ -119,12 +130,8 @@ app.get("/api/options-pressure", async (req, res) => {
 
 app.get("/api/confluence", async (req, res) => {
   try {
-    const [market, news, calendarEvents] = await Promise.all([
-      fetchMarketData(),
-      fetchNewsData(),
-      fetchCalendarEvents(),
-    ]);
-    const biasResult = await buildBiasEngine(market, news, calendarEvents);
+    const { market, news, calendarEvents, atrSnapshots, marketStructureInputs } = await fetchBiasInputs();
+    const biasResult = await buildBiasEngine(market, news, calendarEvents, atrSnapshots, marketStructureInputs);
     const relationships = Object.fromEntries(
       Object.keys(biasResult.assets ?? {}).map((asset) => [
         asset,
@@ -286,13 +293,8 @@ app.get("/api/calendar", async (req, res) => {
 
 app.get("/api/briefing", async (req, res) => {
   try {
-    const [market, news, calendarEvents] = await Promise.all([
-      fetchMarketData(),
-      fetchNewsData(),
-      fetchCalendarEvents(),
-    ]);
-
-    const biasResult = await buildBiasEngine(market, news, calendarEvents);
+    const { market, news, calendarEvents, atrSnapshots, marketStructureInputs } = await fetchBiasInputs();
+    const biasResult = await buildBiasEngine(market, news, calendarEvents, atrSnapshots, marketStructureInputs);
     const newsImpact = buildNewsImpactFeed(news);
     const briefing = buildMacroBriefing({
       market,
@@ -362,13 +364,8 @@ app.post("/api/bias/log", async (req, res) => {
 
 app.get("/api/dashboard", async (req, res) => {
   try {
-    const [market, news, calendarEvents] = await Promise.all([
-      fetchMarketData(),
-      fetchNewsData(),
-      fetchCalendarEvents(),
-    ]);
-
-    const biasResult = await buildBiasEngine(market, news, calendarEvents);
+    const { market, news, calendarEvents, atrSnapshots, marketStructureInputs } = await fetchBiasInputs();
+    const biasResult = await buildBiasEngine(market, news, calendarEvents, atrSnapshots, marketStructureInputs);
     const newsImpact = buildNewsImpactFeed(news);
     const briefing = buildMacroBriefing({
       market,
@@ -386,6 +383,8 @@ app.get("/api/dashboard", async (req, res) => {
       newsImpact,
       marketFlow: biasResult.marketFlow,
       optionsPressure: biasResult.optionsPressure,
+      atrSnapshots: biasResult.atrSnapshots,
+      sessionContext: biasResult.sessionContext,
       generatedAt,
     });
 
@@ -571,14 +570,16 @@ function normalizeHistoryLimit(resultLimit) {
 }
 
 async function buildBiasSnapshot() {
-  const [market, newsBundle, calendarBundle] = await Promise.all([
-    fetchMarketData(),
-    fetchNewsBundle(),
-    fetchCalendarBundle(),
-  ]);
-  const news = newsBundle.items ?? [];
-  const calendarEvents = calendarBundle.events ?? [];
-  const biasResult = await buildBiasEngine(market, news, calendarEvents);
+  const {
+    market,
+    news,
+    calendarEvents,
+    newsBundle,
+    calendarBundle,
+    atrSnapshots,
+    marketStructureInputs,
+  } = await fetchBiasInputs();
+  const biasResult = await buildBiasEngine(market, news, calendarEvents, atrSnapshots, marketStructureInputs);
   const newsImpact = buildNewsImpactFeed(news);
   const generatedAt = new Date().toISOString();
 
@@ -588,6 +589,7 @@ async function buildBiasSnapshot() {
     eventRisk: biasResult.eventRisk,
     marketFlow: biasResult.marketFlow,
     optionsPressure: biasResult.optionsPressure,
+    atrSnapshots: biasResult.atrSnapshots,
     sentiment: biasResult.sentiment,
     bias: biasResult.assets,
     headlineCount: news.length,
@@ -598,7 +600,7 @@ async function buildBiasSnapshot() {
       news: newsBundle.sources ?? [],
       calendar: calendarBundle.source ?? null,
     },
-    sessionContext: buildSessionContext(generatedAt),
+    sessionContext: biasResult.sessionContext ?? buildSessionContext(generatedAt),
     rawContext: {
       market,
       news: newsBundle,
@@ -613,8 +615,17 @@ async function buildBiasSnapshot() {
       },
       newsImpact,
       calendar: calendarBundle,
+      atrSnapshots,
       marketFlow: biasResult.marketFlow,
       optionsPressure: biasResult.optionsPressure,
+      marketStructure: Object.fromEntries(
+        Object.entries(biasResult.assets).map(([asset, row]) => [asset, {
+          gex: row.gex,
+          cvd: row.cvd,
+          reversal: row.reversal,
+          confluenceBreakdown: row.confluenceBreakdown,
+        }])
+      ),
       scoreContract: {
         score: "final confluence display score",
         rawBiasScore: "legacy combined news/technical/macro/event score",
@@ -623,6 +634,26 @@ async function buildBiasSnapshot() {
       },
     },
     generatedAt,
+  };
+}
+
+async function fetchBiasInputs() {
+  const [market, newsBundle, calendarBundle, atrSnapshots, marketStructureInputs] = await Promise.all([
+    fetchMarketData(),
+    fetchNewsBundle(),
+    fetchCalendarBundle(),
+    fetchAtrSnapshotsForAssets(expectedMoveSymbols),
+    fetchMarketStructureInputs(marketStructureTargets),
+  ]);
+
+  return {
+    market,
+    news: newsBundle.items ?? [],
+    calendarEvents: calendarBundle.events ?? [],
+    newsBundle,
+    calendarBundle,
+    atrSnapshots,
+    marketStructureInputs,
   };
 }
 
@@ -648,29 +679,5 @@ function buildNewsFreshnessStatus(newsBundle = {}, fallbackTime) {
         : typeof ageHours === "number" && ageHours > 24
           ? "STALE"
           : "FRESH",
-  };
-}
-
-function buildSessionContext(generatedAt) {
-  const date = new Date(generatedAt);
-  const totalMinutes = date.getUTCHours() * 60 + date.getUTCMinutes();
-
-  return {
-    generatedAt,
-    utcTime: date.toISOString(),
-    sessions: [
-      buildSessionInfo("Asia", totalMinutes, 0, 9 * 60),
-      buildSessionInfo("London", totalMinutes, 8 * 60, 17 * 60),
-      buildSessionInfo("New York", totalMinutes, 13 * 60 + 30, 20 * 60),
-    ],
-  };
-}
-
-function buildSessionInfo(name, nowMinutes, openMinutes, closeMinutes) {
-  return {
-    name,
-    status: nowMinutes >= openMinutes && nowMinutes < closeMinutes ? "RUNNING" : "CLOSED",
-    openUtcMinutes: openMinutes,
-    closeUtcMinutes: closeMinutes,
   };
 }

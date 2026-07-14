@@ -9,6 +9,36 @@ import {
 
 const DB_PATH = "./data/trading_ai.db";
 const DB_DIR = path.dirname(DB_PATH);
+const BIAS_HISTORY_COLUMNS = [
+  "id",
+  "asset",
+  "bias",
+  "confidence",
+  "score",
+  "move_points",
+  "current_price",
+  "analysis",
+  "reasons_json",
+  "drivers_json",
+  "sentiment_json",
+  "news_bias_json",
+  "technical_bias_json",
+  "combined_bias_json",
+  "market_snapshot_json",
+  "run_id",
+  "session_context_json",
+  "source_status_json",
+  "news_context_json",
+  "calendar_context_json",
+  "event_risk_json",
+  "regime_json",
+  "formula_components_json",
+  "raw_context_json",
+  "evaluation_json",
+  "manual_review_notes",
+  "headline_count",
+  "generated_at",
+];
 
 fs.mkdirSync(DB_DIR, { recursive: true });
 
@@ -20,7 +50,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   }
 });
 
-export function initDb() {
+export async function initDb() {
   const createBiasHistoryTableSql = `
     CREATE TABLE IF NOT EXISTS bias_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +58,7 @@ export function initDb() {
       bias TEXT NOT NULL,
       confidence INTEGER NOT NULL,
       score REAL NOT NULL,
-      move_points REAL NOT NULL,
+      move_points REAL,
       current_price REAL,
       analysis TEXT,
       reasons_json TEXT,
@@ -97,65 +127,97 @@ export function initDb() {
     );
   `;
 
-  db.run(createBiasHistoryTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create bias_history table:", err.message);
-    } else {
-      console.log("bias_history table ready");
-    }
-  });
+  await runSql(createBiasHistoryTableSql);
+  await runSql(createBiasRunsTableSql);
+  await runSql(createWatchlistTableSql);
 
-  db.run(createBiasRunsTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create bias_runs table:", err.message);
-    } else {
-      console.log("bias_runs table ready");
-    }
-  });
+  const schemaUpdates = [
+      `ALTER TABLE bias_history ADD COLUMN drivers_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN sentiment_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN news_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN technical_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN combined_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN run_id INTEGER`,
+      `ALTER TABLE bias_history ADD COLUMN session_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN source_status_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN news_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN calendar_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN event_risk_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN regime_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN formula_components_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN raw_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN evaluation_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN manual_review_notes TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_level TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_score REAL`,
+      `ALTER TABLE bias_runs ADD COLUMN next_event_title TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN run_type TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN logged_at TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN session_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN source_status_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN market_snapshot_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN news_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN calendar_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN regime_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN bias_output_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN formula_components_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN raw_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN manual_review_notes TEXT`,
+    ];
 
-  db.run(createWatchlistTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create watchlist_items table:", err.message);
-    } else {
-      console.log("watchlist_items table ready");
-      seedCoreWatchlistItems().catch((seedErr) => {
-        console.error("Failed to seed core watchlist:", seedErr.message);
-      });
-    }
-  });
+  for (const sql of schemaUpdates) {
+    await addColumnIfMissing(sql);
+  }
 
-  db.run(`ALTER TABLE bias_history ADD COLUMN drivers_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN sentiment_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN news_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN technical_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN combined_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN run_id INTEGER`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN session_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN source_status_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN news_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN calendar_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN event_risk_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN regime_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN formula_components_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN raw_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN evaluation_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN manual_review_notes TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_level TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_score REAL`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN next_event_title TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN run_type TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN logged_at TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN session_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN source_status_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN market_snapshot_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN news_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN calendar_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN regime_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN bias_output_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN formula_components_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN raw_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN manual_review_notes TEXT`, () => {});
+  await migrateNullableMovePoints(createBiasHistoryTableSql);
+  await seedCoreWatchlistItems();
+
+  console.log("bias_history table ready");
+  console.log("bias_runs table ready");
+  console.log("watchlist_items table ready");
+}
+
+async function addColumnIfMissing(sql) {
+  try {
+    await runSql(sql);
+  } catch (err) {
+    if (!/duplicate column name/i.test(err.message)) {
+      throw err;
+    }
+  }
+}
+
+async function migrateNullableMovePoints(createBiasHistoryTableSql) {
+  const columns = await allSql(`PRAGMA table_info(bias_history)`);
+  const movePointsColumn = columns.find((column) => column.name === "move_points");
+
+  if (!movePointsColumn || Number(movePointsColumn.notnull) !== 1) {
+    return;
+  }
+
+  try {
+    await runSql(`BEGIN IMMEDIATE`);
+    await runSql(`ALTER TABLE bias_history RENAME TO bias_history_legacy`);
+    await runSql(createBiasHistoryTableSql);
+    await runSql(
+      `
+        INSERT INTO bias_history (${BIAS_HISTORY_COLUMNS.join(", ")})
+        SELECT ${BIAS_HISTORY_COLUMNS.join(", ")}
+        FROM bias_history_legacy
+      `
+    );
+    await runSql(`DROP TABLE bias_history_legacy`);
+    await runSql(`COMMIT`);
+    console.log("Migrated bias_history.move_points to allow unavailable ATR values");
+  } catch (err) {
+    try {
+      await runSql(`ROLLBACK`);
+    } catch {
+      // The original failure is more useful than a rollback error here.
+    }
+    throw err;
+  }
 }
 
 export async function getWatchlistItems({ includeDisabled = true } = {}) {
@@ -922,6 +984,10 @@ function buildAssetFormulaComponents({
     marketFlowSnapshot: row.flow ?? null,
     newsFlowRelationship: row.newsFlowRelationship ?? null,
     optionsPressureSnapshot: row.optionsPressure ?? null,
+    gex: row.gex ?? null,
+    cvd: row.cvd ?? null,
+    reversal: row.reversal ?? null,
+    confluenceBreakdown: row.confluenceBreakdown ?? row.confluence?.confluenceBreakdown ?? null,
     confluence: row.confluence ?? null,
     trendState: row.trendState ?? null,
     edgeScore: row.edgeScore ?? null,
@@ -932,12 +998,18 @@ function buildAssetFormulaComponents({
     formulas: {
       combinedBias: "scoreToBias(newsScore + technicalScore + crossAssetConfluence)",
       advancedConfluence:
-        "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure - eventRiskAdjustment",
+        "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure + GEX + CVD - eventRiskAdjustment",
+      gex:
+        "Black-Scholes gamma * open interest * contract multiplier * spot^2 * 1%; calls positive and puts negative under an explicit dealer-position proxy",
+      cvd:
+        "cumulative signed 15-minute volume; candle direction estimates aggressor side because bid/ask trade data is unavailable",
+      reversalConfluence:
+        "existing sweep/reclaim pattern + GEX reaction context + CVD divergence/exhaustion - unsupported continuation pressure",
       confidence:
         "advancedConfluence.confidence after event-risk adjustment",
       expectedMove:
         row.expectedMoveBasis?.formula ??
-        "abs(edgeScore / 18) * (currentPrice * 0.0005) * eventRisk.moveMultiplier",
+        "ATR(14 daily trading sessions)",
     },
     reasons: row.combinedBias?.reasons ?? row.reasons ?? [],
     marketSnapshot: market,
@@ -994,7 +1066,13 @@ function buildAssetNewsContext(asset, newsContext = null, row = {}, rawContext =
         biasMatchSource: "newsImpact",
       })
     ),
-    newsVsFlowContext: row.newsFlowRelationship ?? null,
+          newsVsFlowContext: row.newsFlowRelationship ?? null,
+          marketStructure: {
+            gex: row.gex ?? null,
+            cvd: row.cvd ?? null,
+            reversal: row.reversal ?? null,
+            confluenceBreakdown: row.confluenceBreakdown ?? null,
+          },
     newsBias: row.newsBias ?? null,
     sentimentSummary: row.sentimentSummary ?? null,
     asset,
