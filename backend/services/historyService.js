@@ -56,9 +56,10 @@ function detectChange(current, previous) {
     (current.score ?? 0) - (previous.score ?? 0)
   );
 
-  const moveDelta = round(
-    (current.movePoints ?? 0) - (previous.movePoints ?? 0)
-  );
+  const moveDelta =
+    typeof current.movePoints === "number" && typeof previous.movePoints === "number"
+      ? round(current.movePoints - previous.movePoints)
+      : null;
 
   const currentDrivers = (current.drivers ?? []).map((d) => d.label);
   const previousDrivers = (previous.drivers ?? []).map((d) => d.label);

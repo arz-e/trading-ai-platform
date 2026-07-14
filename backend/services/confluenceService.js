@@ -1,4 +1,8 @@
-import { scoreToBias } from "../utils/scoring.js";
+import {
+  buildConfluenceBreakdown,
+  buildCvdBiasComponent,
+  buildGexBiasComponent,
+} from "./structureConfluenceService.js";
 
 export function buildConfluenceForAsset({
   asset,
@@ -8,18 +12,27 @@ export function buildConfluenceForAsset({
   regime = null,
   eventRisk = null,
   optionsPressure = null,
+  gex = null,
+  cvd = null,
+  reversal = null,
 }) {
+  const gexComponent = buildGexBiasComponent(gex, currentBiasOutput.bias, cvd);
+  const cvdComponent = buildCvdBiasComponent(cvd);
   const components = buildComponents({
     currentBiasOutput,
     marketFlow,
     newsFlowRelationship,
     regime,
     optionsPressure,
+    gex,
+    cvd,
+    gexComponent,
+    cvdComponent,
   });
   const baseScore = components.reduce((sum, component) => sum + component.score, 0);
   const eventRiskAdjustment = buildEventRiskAdjustment(eventRisk);
   const edgeScore = clamp(baseScore + eventRiskAdjustment.score, -100, 100);
-  const finalBias = scoreToBias(edgeScore / 18);
+  const finalBias = edgeScoreToBias(edgeScore);
   const confidence = clamp(
     45 + Math.abs(edgeScore) * 0.42 - (eventRisk?.confidencePenalty ?? 0),
     25,
@@ -29,6 +42,16 @@ export function buildConfluenceForAsset({
   const trendState = resolveTrendState({ edgeScore, marketFlow, contradictions, eventRisk });
   const watchReasons = buildWatchReasons({ marketFlow, newsFlowRelationship, regime, trendState });
   const avoidReasons = buildAvoidReasons({ contradictions, eventRisk, trendState, optionsPressure });
+  const confluenceBreakdown = buildConfluenceBreakdown({
+    rawBiasScore: currentBiasOutput.score,
+    finalBiasScore: edgeScore,
+    trendState,
+    reversal,
+    gex,
+    cvd,
+    gexComponent,
+    cvdComponent,
+  });
 
   return {
     asset,
@@ -45,11 +68,18 @@ export function buildConfluenceForAsset({
     contradictions,
     watchReasons,
     avoidReasons,
+    confluenceBreakdown,
     reasons: [
       ...components.map((component) => `${component.label}: ${component.score.toFixed(2)} / ${component.weight}`),
       ...eventRiskAdjustment.reasons,
     ],
   };
+}
+
+export function edgeScoreToBias(edgeScore) {
+  if (edgeScore >= 20) return "Bullish";
+  if (edgeScore <= -20) return "Bearish";
+  return "Ranging";
 }
 
 export function buildConfluenceSummary({
@@ -73,13 +103,16 @@ export function buildConfluenceSummary({
           regime,
           eventRisk,
           optionsPressure: row.optionsPressure ?? optionsPressure?.assets?.find((pressure) => pressure.asset === asset),
+          gex: row.gex,
+          cvd: row.cvd,
+          reversal: row.reversal,
         }),
       ])
     ),
   };
 }
 
-function buildComponents({ currentBiasOutput, marketFlow, newsFlowRelationship, regime, optionsPressure }) {
+function buildComponents({ currentBiasOutput, marketFlow, newsFlowRelationship, regime, optionsPressure, gex, cvd, gexComponent, cvdComponent }) {
   return [
     {
       key: "marketFlow",
@@ -115,6 +148,22 @@ function buildComponents({ currentBiasOutput, marketFlow, newsFlowRelationship, 
       weight: 10,
       score: optionsPressure?.status === "OK" ? normalizeDirectionScore(optionsPressure.score, 100) * 10 : 0,
       raw: optionsPressure ?? null,
+    },
+    {
+      key: "gex",
+      label: "Gamma Exposure",
+      weight: gexComponent.weight,
+      score: gexComponent.score,
+      raw: gex ?? null,
+      notes: gexComponent.notes,
+    },
+    {
+      key: "cvd",
+      label: "Cumulative Volume Delta",
+      weight: cvdComponent.weight,
+      score: cvdComponent.score,
+      raw: cvd ?? null,
+      notes: cvdComponent.notes,
     },
   ];
 }

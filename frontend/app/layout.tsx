@@ -1,16 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Trading AI Platform",
@@ -25,10 +14,16 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+        className="antialiased"
+        style={
+          {
+            "--font-ui": 'Inter, "Segoe UI Variable", "Segoe UI", Arial, sans-serif',
+            "--font-data": '"Cascadia Code", "SFMono-Regular", Consolas, monospace',
+          } as React.CSSProperties
+        }
+        >
+          {children}
+        </body>
     </html>
   );
 }

@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "lint": "node --check server.js && node --check config/providerSymbols.js && node --check config/symbolUniverse.js && node --check config/flowAssets.js && node --check services/dbService.js && node --check services/finnhubService.js && node --check services/watchlistService.js && node --check services/biasService.js && node --check services/flowService.js && node --check services/newsFlowService.js && node --check services/pressureService.js && node --check services/confluenceService.js && node --check services/systemService.js && node --check services/marketService.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint": "node --check server.js && node --check config/providerSymbols.js && node --check config/symbolUniverse.js && node --check config/flowAssets.js && node --check services/dbService.js && node --check services/finnhubService.js && node --check services/watchlistService.js && node --check services/biasService.js && node --check services/atrService.js && node --check services/sessionService.js && node --check services/reversalService.js && node --check services/marketStructureDataService.js && node --check services/gexService.js && node --check services/cvdService.js && node --check services/structureConfluenceService.js && node --check services/flowService.js && node --check services/newsFlowService.js && node --check services/pressureService.js && node --check services/confluenceService.js && node --check services/systemService.js && node --check services/marketService.js && node --check test/atrService.test.js && node --check test/sessionService.test.js && node --check test/reversalService.test.js && node --check test/gexService.test.js && node --check test/cvdService.test.js && node --check test/structureConfluenceService.test.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

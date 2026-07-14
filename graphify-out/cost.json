@@ -1,0 +1,6 @@
+{
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "estimated_cost_usd": 0,
+  "note": "Local AST extraction plus semantic extraction cached from Graphify worker output."
+}

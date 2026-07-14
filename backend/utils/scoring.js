@@ -1,7 +1,7 @@
 export function scoreToBias(score) {
   if (score >= 2) return "Bullish";
   if (score <= -2) return "Bearish";
-  return "Neutral";
+  return "Ranging";
 }
 
 export function scoreToConfidence(score, hits = 0) {

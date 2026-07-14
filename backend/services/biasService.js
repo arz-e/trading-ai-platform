@@ -18,10 +18,23 @@ import { buildConfluenceForAsset } from "./confluenceService.js";
 import { buildMarketFlowSnapshot, flowRowForAsset } from "./flowService.js";
 import { compareNewsToFlow } from "./newsFlowService.js";
 import { buildOptionsPressureSnapshot, optionsPressureForAsset } from "./pressureService.js";
+import { expectedMoveFromAtr } from "./atrService.js";
+import { buildSessionContext, buildSessionProjection } from "./sessionService.js";
+import { buildPreviousSessionReversal } from "./reversalService.js";
+import { analyzeCvd } from "./cvdService.js";
+import { analyzeGex } from "./gexService.js";
 import { crossAssetAdjustments, scoreToBias, scoreToConfidence } from "../utils/scoring.js";
 import { containsKeyword } from "../utils/textMatching.js";
 
-export async function buildBiasEngine(market = {}, news = [], calendarEvents = []) {
+export async function buildBiasEngine(
+  market = {},
+  news = [],
+  calendarEvents = [],
+  atrSnapshots = {},
+  marketStructureInputs = {}
+) {
+  const generatedAt = new Date().toISOString();
+  const sessionContext = buildSessionContext(generatedAt);
   const regime = detectMacroRegime(market);
   const eventRisk = computeEventRisk(calendarEvents);
   const sentimentItems = analyzeHeadlineSentiment(news);
@@ -41,8 +54,28 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       regime,
       eventRisk,
     });
-    const price = market[asset]?.price ?? 0;
-    const movePoints = estimateExpectedMove(asset, price, combined.score, eventRisk);
+    const price = market[asset]?.price ?? null;
+    const atrSnapshot = atrSnapshots[asset] ?? null;
+    const reversal = buildPreviousSessionReversal({
+      market: market[asset],
+      atrSnapshot,
+    });
+    const structureInput = marketStructureInputs[asset] ?? {};
+    const cvd = analyzeCvd({
+      ticker: asset,
+      candles: structureInput.candleData?.candles ?? [],
+      stale: Boolean(structureInput.candleData?.stale),
+    });
+    const gex = analyzeGex({
+      ticker: asset,
+      spotPrice: price,
+      optionsData: structureInput.optionsData ?? {
+        status: "UNAVAILABLE",
+        error: "Ticker-specific options data was not requested.",
+      },
+      riskFreeRate: resolveRiskFreeRate(market),
+    });
+    const rawMovePoints = null;
     const drivers = summarizeDrivers(combined.reasons);
     const sentimentSummary = buildAssetSentimentSummary(asset, sentimentItems);
     const flow = flowRowForAsset(marketFlow, asset);
@@ -52,7 +85,7 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       bias: combined.bias,
       confidence: combined.confidence,
       score: combined.score,
-      movePoints,
+      movePoints: rawMovePoints,
       currentPrice: price,
       newsBias,
       technicalBias,
@@ -71,15 +104,37 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       regime,
       eventRisk,
       optionsPressure,
+      gex,
+      cvd,
+      reversal,
+    });
+    const reversalWithConfluence = {
+      ...reversal,
+      confluenceScore: confluence.confluenceBreakdown.finalReversalConfluence,
+      confluenceNotes: confluence.confluenceBreakdown.notes,
+    };
+    const sessionProjection = buildSessionProjection({
+      bias: confluence.finalBias,
+      confidence: confluence.confidence,
+      trendState: confluence.trendState,
+      sessionContext,
+    });
+    const finalMovePoints = expectedMoveFromAtr(atrSnapshot);
+    const expectedMoveBasis = buildExpectedMoveBasis({
+      asset,
+      rawBiasScore: combined.score,
+      confluenceScore: confluence.edgeScore,
+      atrSnapshot,
+      finalMovePoints,
     });
     const analysisPayload = buildAnalysisPayload({
       asset,
       bias: confluence.finalBias,
       confidence: confluence.confidence,
-      score: combined.score,
-      movePoints,
+      score: confluence.edgeScore,
+      movePoints: finalMovePoints,
       currentPrice: price,
-      atr: null,
+      atr: atrSnapshot?.atr ?? null,
       regime: regime.regime,
       regimeConfidence: regime.confidence,
       eventRisk,
@@ -91,8 +146,16 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
     output[asset] = {
       bias: confluence.finalBias,
       confidence: confluence.confidence,
-      score: combined.score,
-      movePoints,
+      score: confluence.edgeScore,
+      displayScore: confluence.edgeScore,
+      rawBiasScore: combined.score,
+      legacyScore: combined.score,
+      confluenceScore: confluence.edgeScore,
+      edgeScore: confluence.edgeScore,
+      movePoints: finalMovePoints,
+      rawMovePoints,
+      expectedMoveBasis,
+      expectedMoveAvailable: finalMovePoints !== null,
       currentPrice: price,
       newsBias,
       technicalBias,
@@ -109,10 +172,14 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
       optionsPressure,
       confluence,
       trendState: confluence.trendState,
-      edgeScore: confluence.edgeScore,
+      sessionProjection,
+      reversal: reversalWithConfluence,
+      gex,
+      cvd,
+      confluenceBreakdown: confluence.confluenceBreakdown,
       watchReasons: confluence.watchReasons,
       avoidReasons: confluence.avoidReasons,
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: generatedAt,
     };
   }
 
@@ -122,8 +189,18 @@ export async function buildBiasEngine(market = {}, news = [], calendarEvents = [
     sentiment,
     marketFlow,
     optionsPressure: optionsPressureSnapshot,
+    atrSnapshots,
+    sessionContext,
+    marketStructureInputs,
     assets: output,
   };
+}
+
+function resolveRiskFreeRate(market) {
+  const yieldPercent = market?.US10Y?.price;
+  return typeof yieldPercent === "number" && Number.isFinite(yieldPercent)
+    ? Math.max(0, yieldPercent / 100)
+    : 0.04;
 }
 
 function buildNewsBias(asset, news = []) {
@@ -575,14 +652,38 @@ function combineBiasSignals({ asset, newsBias, technicalBias, market, regime, ev
   };
 }
 
-function estimateExpectedMove(asset, price, score, eventRisk = {}) {
-  const rawMove = Math.abs(score) * (price * 0.0005) * (eventRisk.moveMultiplier ?? 1);
+function buildExpectedMoveBasis({
+  asset,
+  rawBiasScore,
+  confluenceScore,
+  atrSnapshot = null,
+  finalMovePoints,
+}) {
+  const available = typeof finalMovePoints === "number" && finalMovePoints > 0;
 
-  if (asset === "GOLD" || asset === "USOIL") {
-    return Number(rawMove.toFixed(5));
-  }
-
-  return Number(rawMove.toFixed(3));
+  return {
+    asset,
+    basis: "ATR",
+    model: "average_true_range",
+    status: available ? "OK" : "UNAVAILABLE",
+    displayScoreField: "score",
+    rawBiasScore,
+    legacyScore: rawBiasScore,
+    confluenceScore,
+    edgeScore: confluenceScore,
+    source: atrSnapshot?.source ?? "Yahoo Finance chart",
+    interval: atrSnapshot?.interval ?? "1d",
+    horizon: atrSnapshot?.horizon ?? "1 trading session",
+    lookbackSessions: atrSnapshot?.lookbackSessions ?? null,
+    atr: atrSnapshot?.atr ?? null,
+    candleCount: atrSnapshot?.candleCount ?? 0,
+    asOf: atrSnapshot?.asOf ?? null,
+    fetchedAt: atrSnapshot?.fetchedAt ?? null,
+    unavailableReason: available ? null : atrSnapshot?.error ?? "ATR data unavailable.",
+    finalMovePoints,
+    formula: available ? "ATR(14 daily trading sessions)" : null,
+    eventRiskEffect: "Event risk can reduce confidence but does not alter the ATR range.",
+  };
 }
 
 function buildAssetSentimentSummary(asset, sentimentItems = []) {

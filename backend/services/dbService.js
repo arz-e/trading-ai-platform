@@ -9,6 +9,36 @@ import {
 
 const DB_PATH = "./data/trading_ai.db";
 const DB_DIR = path.dirname(DB_PATH);
+const BIAS_HISTORY_COLUMNS = [
+  "id",
+  "asset",
+  "bias",
+  "confidence",
+  "score",
+  "move_points",
+  "current_price",
+  "analysis",
+  "reasons_json",
+  "drivers_json",
+  "sentiment_json",
+  "news_bias_json",
+  "technical_bias_json",
+  "combined_bias_json",
+  "market_snapshot_json",
+  "run_id",
+  "session_context_json",
+  "source_status_json",
+  "news_context_json",
+  "calendar_context_json",
+  "event_risk_json",
+  "regime_json",
+  "formula_components_json",
+  "raw_context_json",
+  "evaluation_json",
+  "manual_review_notes",
+  "headline_count",
+  "generated_at",
+];
 
 fs.mkdirSync(DB_DIR, { recursive: true });
 
@@ -20,7 +50,7 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   }
 });
 
-export function initDb() {
+export async function initDb() {
   const createBiasHistoryTableSql = `
     CREATE TABLE IF NOT EXISTS bias_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,7 +58,7 @@ export function initDb() {
       bias TEXT NOT NULL,
       confidence INTEGER NOT NULL,
       score REAL NOT NULL,
-      move_points REAL NOT NULL,
+      move_points REAL,
       current_price REAL,
       analysis TEXT,
       reasons_json TEXT,
@@ -97,65 +127,97 @@ export function initDb() {
     );
   `;
 
-  db.run(createBiasHistoryTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create bias_history table:", err.message);
-    } else {
-      console.log("bias_history table ready");
-    }
-  });
+  await runSql(createBiasHistoryTableSql);
+  await runSql(createBiasRunsTableSql);
+  await runSql(createWatchlistTableSql);
 
-  db.run(createBiasRunsTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create bias_runs table:", err.message);
-    } else {
-      console.log("bias_runs table ready");
-    }
-  });
+  const schemaUpdates = [
+      `ALTER TABLE bias_history ADD COLUMN drivers_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN sentiment_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN news_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN technical_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN combined_bias_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN run_id INTEGER`,
+      `ALTER TABLE bias_history ADD COLUMN session_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN source_status_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN news_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN calendar_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN event_risk_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN regime_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN formula_components_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN raw_context_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN evaluation_json TEXT`,
+      `ALTER TABLE bias_history ADD COLUMN manual_review_notes TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_level TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_score REAL`,
+      `ALTER TABLE bias_runs ADD COLUMN next_event_title TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN run_type TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN logged_at TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN session_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN source_status_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN market_snapshot_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN news_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN calendar_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN event_risk_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN regime_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN bias_output_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN formula_components_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN raw_context_json TEXT`,
+      `ALTER TABLE bias_runs ADD COLUMN manual_review_notes TEXT`,
+    ];
 
-  db.run(createWatchlistTableSql, (err) => {
-    if (err) {
-      console.error("Failed to create watchlist_items table:", err.message);
-    } else {
-      console.log("watchlist_items table ready");
-      seedCoreWatchlistItems().catch((seedErr) => {
-        console.error("Failed to seed core watchlist:", seedErr.message);
-      });
-    }
-  });
+  for (const sql of schemaUpdates) {
+    await addColumnIfMissing(sql);
+  }
 
-  db.run(`ALTER TABLE bias_history ADD COLUMN drivers_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN sentiment_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN news_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN technical_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN combined_bias_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN run_id INTEGER`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN session_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN source_status_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN news_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN calendar_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN event_risk_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN regime_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN formula_components_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN raw_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN evaluation_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_history ADD COLUMN manual_review_notes TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_level TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_score REAL`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN next_event_title TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN run_type TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN logged_at TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN session_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN source_status_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN market_snapshot_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN news_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN calendar_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN event_risk_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN regime_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN bias_output_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN formula_components_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN raw_context_json TEXT`, () => {});
-  db.run(`ALTER TABLE bias_runs ADD COLUMN manual_review_notes TEXT`, () => {});
+  await migrateNullableMovePoints(createBiasHistoryTableSql);
+  await seedCoreWatchlistItems();
+
+  console.log("bias_history table ready");
+  console.log("bias_runs table ready");
+  console.log("watchlist_items table ready");
+}
+
+async function addColumnIfMissing(sql) {
+  try {
+    await runSql(sql);
+  } catch (err) {
+    if (!/duplicate column name/i.test(err.message)) {
+      throw err;
+    }
+  }
+}
+
+async function migrateNullableMovePoints(createBiasHistoryTableSql) {
+  const columns = await allSql(`PRAGMA table_info(bias_history)`);
+  const movePointsColumn = columns.find((column) => column.name === "move_points");
+
+  if (!movePointsColumn || Number(movePointsColumn.notnull) !== 1) {
+    return;
+  }
+
+  try {
+    await runSql(`BEGIN IMMEDIATE`);
+    await runSql(`ALTER TABLE bias_history RENAME TO bias_history_legacy`);
+    await runSql(createBiasHistoryTableSql);
+    await runSql(
+      `
+        INSERT INTO bias_history (${BIAS_HISTORY_COLUMNS.join(", ")})
+        SELECT ${BIAS_HISTORY_COLUMNS.join(", ")}
+        FROM bias_history_legacy
+      `
+    );
+    await runSql(`DROP TABLE bias_history_legacy`);
+    await runSql(`COMMIT`);
+    console.log("Migrated bias_history.move_points to allow unavailable ATR values");
+  } catch (err) {
+    try {
+      await runSql(`ROLLBACK`);
+    } catch {
+      // The original failure is more useful than a rollback error here.
+    }
+    throw err;
+  }
 }
 
 export async function getWatchlistItems({ includeDisabled = true } = {}) {
@@ -439,7 +501,7 @@ export async function logBiasRun({
 
   for (const asset of Object.keys(biasOutput)) {
     const row = biasOutput[asset];
-    const assetNewsContext = buildAssetNewsContext(asset, newsContext, row);
+    const assetNewsContext = buildAssetNewsContext(asset, newsContext, row, rawContext);
     const assetCalendarContext = buildAssetCalendarContext(asset, calendarContext, eventRisk);
     const assetFormulaComponents = buildAssetFormulaComponents({
       asset,
@@ -480,6 +542,18 @@ export async function logBiasRun({
           newsContext: assetNewsContext,
           calendarContext: assetCalendarContext,
           sourceStatus,
+          newsVsFlowContext: row.newsFlowRelationship ?? null,
+          scoreContext: {
+            finalDisplayedOutput: {
+              bias: row.bias,
+              confidence: row.confidence,
+              score: row.score,
+              expectedMove: row.movePoints,
+            },
+            rawBiasScore: row.rawBiasScore ?? row.combinedBias?.score ?? null,
+            confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+            expectedMoveBasis: row.expectedMoveBasis ?? null,
+          },
         }),
         null,
         null,
@@ -882,12 +956,20 @@ function buildAssetFormulaComponents({
       bias: row.bias,
       confidence: row.confidence,
       score: row.score,
+      displayScore: row.displayScore ?? row.score,
+      confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+      rawBiasScore: row.rawBiasScore ?? combined.score ?? null,
       expectedMove: row.movePoints,
+      expectedMoveBasis: row.expectedMoveBasis ?? null,
     },
     components: {
       newsScore: combined.newsScore ?? row.newsBias?.score ?? 0,
       technicalScore: combined.technicalScore ?? row.technicalBias?.score ?? 0,
-      combinedScore: combined.score ?? row.score,
+      combinedScore: combined.score ?? row.rawBiasScore ?? row.score,
+      rawBiasScore: row.rawBiasScore ?? combined.score ?? null,
+      legacyScore: row.legacyScore ?? row.rawBiasScore ?? combined.score ?? null,
+      confluenceScore: row.confluenceScore ?? row.edgeScore ?? null,
+      displayScore: row.displayScore ?? row.score,
       crossAssetConfluence: extractCrossAssetConfluence(row.combinedBias?.reasons),
       eventRiskLevel: eventRisk?.level ?? row.eventRisk?.level ?? null,
       eventRiskScore: eventRisk?.score ?? row.eventRisk?.score ?? null,
@@ -902,19 +984,32 @@ function buildAssetFormulaComponents({
     marketFlowSnapshot: row.flow ?? null,
     newsFlowRelationship: row.newsFlowRelationship ?? null,
     optionsPressureSnapshot: row.optionsPressure ?? null,
+    gex: row.gex ?? null,
+    cvd: row.cvd ?? null,
+    reversal: row.reversal ?? null,
+    confluenceBreakdown: row.confluenceBreakdown ?? row.confluence?.confluenceBreakdown ?? null,
     confluence: row.confluence ?? null,
     trendState: row.trendState ?? null,
     edgeScore: row.edgeScore ?? null,
+    rawMovePoints: row.rawMovePoints ?? null,
+    expectedMoveBasis: row.expectedMoveBasis ?? null,
     watchReasons: row.watchReasons ?? [],
     avoidReasons: row.avoidReasons ?? [],
     formulas: {
       combinedBias: "scoreToBias(newsScore + technicalScore + crossAssetConfluence)",
       advancedConfluence:
-        "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure - eventRiskAdjustment",
+        "weighted marketFlow + technicalBias + macroRegime + newsFlowRelationship + optionsPressure + GEX + CVD - eventRiskAdjustment",
+      gex:
+        "Black-Scholes gamma * open interest * contract multiplier * spot^2 * 1%; calls positive and puts negative under an explicit dealer-position proxy",
+      cvd:
+        "cumulative signed 15-minute volume; candle direction estimates aggressor side because bid/ask trade data is unavailable",
+      reversalConfluence:
+        "existing sweep/reclaim pattern + GEX reaction context + CVD divergence/exhaustion - unsupported continuation pressure",
       confidence:
-        "scoreToConfidence(combinedScore, reasonCount) - eventRisk.confidencePenalty",
+        "advancedConfluence.confidence after event-risk adjustment",
       expectedMove:
-        "abs(combinedScore) * (currentPrice * 0.0005) * eventRisk.moveMultiplier",
+        row.expectedMoveBasis?.formula ??
+        "ATR(14 daily trading sessions)",
     },
     reasons: row.combinedBias?.reasons ?? row.reasons ?? [],
     marketSnapshot: market,
@@ -922,20 +1017,62 @@ function buildAssetFormulaComponents({
   };
 }
 
-function buildAssetNewsContext(asset, newsContext = null, row = {}) {
+function buildAssetNewsContext(asset, newsContext = null, row = {}, rawContext = null) {
   const matchedTitles = new Set(
     (row.newsBias?.matchedHeadlines ?? []).map((headline) => headline.title)
   );
-  const relevantItems = (newsContext?.items ?? []).filter((item) =>
-    matchedTitles.has(item.title)
+  const flowHeadlineMap = buildFlowHeadlineRelationshipMap(row.newsFlowRelationship);
+  const impactItems = rawContext?.newsImpact?.items ?? rawContext?.marketNews?.topMarketHeadlines ?? [];
+  const impactedItems = impactItems.filter((item) =>
+    Array.isArray(item.impactedAssets) && item.impactedAssets.includes(asset)
   );
+  const flowRelatedTitles = new Set(flowHeadlineMap.keys());
+  const relevantItems = (newsContext?.items ?? []).filter((item) =>
+    matchedTitles.has(item.title) || flowRelatedTitles.has(item.title)
+  );
+  const marketWideHeadlines = (rawContext?.marketNews?.topMarketHeadlines ?? impactItems)
+    .slice(0, 12)
+    .map((item) => normalizeAuditHeadline(item, flowHeadlineMap.get(item.title)));
+  const assetRelevantHeadlines = mergeAuditHeadlines([
+    ...(row.newsBias?.matchedHeadlines ?? []).map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        matchedKeywords: extractMatchedKeywords(item),
+        biasMatchSource: "newsBias",
+      })
+    ),
+    ...impactedItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: "newsImpact",
+      })
+    ),
+    ...relevantItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: matchedTitles.has(item.title) ? "newsBias" : "newsVsFlow",
+      })
+    ),
+  ]);
 
   return {
     sourceStatus: newsContext?.sources ?? [],
     fetchedAt: newsContext?.generatedAt ?? null,
     headlineCount: newsContext?.count ?? relevantItems.length,
+    marketHeadlineCount: rawContext?.marketNews?.headlineCount ?? impactItems.length,
+    marketNewsImpactSummary: rawContext?.marketNews?.impactSummary ?? rawContext?.newsImpact?.summary ?? null,
+    marketWideHeadlines,
     matchedHeadlines: row.newsBias?.matchedHeadlines ?? [],
-    relevantHeadlines: relevantItems,
+    relevantHeadlines: assetRelevantHeadlines,
+    impactedHeadlines: impactedItems.map((item) =>
+      normalizeAuditHeadline(item, flowHeadlineMap.get(item.title), {
+        biasMatchSource: "newsImpact",
+      })
+    ),
+          newsVsFlowContext: row.newsFlowRelationship ?? null,
+          marketStructure: {
+            gex: row.gex ?? null,
+            cvd: row.cvd ?? null,
+            reversal: row.reversal ?? null,
+            confluenceBreakdown: row.confluenceBreakdown ?? null,
+          },
     newsBias: row.newsBias ?? null,
     sentimentSummary: row.sentimentSummary ?? null,
     asset,
@@ -951,14 +1088,112 @@ function buildAssetCalendarContext(asset, calendarContext = null, eventRisk = nu
         ? (new Date(event.datetime).getTime() - Date.now()) / 3600000
         : null,
   }));
+  const relevantEvents = events.filter((event) =>
+    Array.isArray(event.relatedAssets) && event.relatedAssets.includes(asset)
+  );
 
   return {
     asset,
     source: calendarContext?.source ?? null,
     generatedAt: calendarContext?.generatedAt ?? null,
     events,
+    relevantEvents,
+    upcomingEvents: events
+      .filter((event) => typeof event.hoursUntil === "number" && event.hoursUntil > 0)
+      .sort((a, b) => a.hoursUntil - b.hoursUntil)
+      .slice(0, 20),
     eventRisk,
+    eventRiskEffect: {
+      level: eventRisk?.level ?? null,
+      score: eventRisk?.score ?? null,
+      confidencePenalty: eventRisk?.confidencePenalty ?? null,
+      moveMultiplier: eventRisk?.moveMultiplier ?? null,
+      nextEvent: eventRisk?.nextEvent ?? null,
+      affectedThisAsset: eventRisk?.nextEvent
+        ? inferCalendarRelatedAssets(eventRisk.nextEvent).includes(asset)
+        : false,
+      reasons: eventRisk?.reasons ?? [],
+    },
   };
+}
+
+function buildFlowHeadlineRelationshipMap(newsFlowRelationship = {}) {
+  const map = new Map();
+  const buckets = [
+    ["confirmingHeadlines", "confirms_flow"],
+    ["contradictingHeadlines", "contradicts_flow"],
+    ["explanatoryHeadlines", "explains_flow"],
+    ["unrelatedHeadlines", "unrelated"],
+  ];
+
+  for (const [key, relationship] of buckets) {
+    for (const headline of newsFlowRelationship?.[key] ?? []) {
+      if (headline?.title) map.set(headline.title, relationship);
+    }
+  }
+
+  return map;
+}
+
+function normalizeAuditHeadline(item = {}, newsFlowRelationship = null, extra = {}) {
+  return {
+    title: item.title ?? null,
+    source: item.source ?? null,
+    publishedAt: item.pubDate ?? null,
+    link: item.link ?? item.url ?? null,
+    impactedAssets: item.impactedAssets ?? [],
+    sentimentLabel: item.sentimentLabel ?? null,
+    sentimentScore: item.sentimentScore ?? null,
+    biasDirection: resolveAuditHeadlineDirection(item),
+    matchedKeywords: extra.matchedKeywords ?? [
+      ...(item.matchedPositive ?? []),
+      ...(item.matchedNegative ?? []),
+    ],
+    matchedPositive: item.matchedPositive ?? [],
+    matchedNegative: item.matchedNegative ?? [],
+    category: item.category ?? null,
+    categories: item.categories ?? [],
+    impactScore: item.impactScore ?? null,
+    impactLabel: item.impactLabel ?? null,
+    confidence: item.confidence ?? null,
+    sourceWeight: item.sourceWeight ?? null,
+    categoryWeight: item.categoryWeight ?? null,
+    assetRelevanceWeight: item.assetRelevanceWeight ?? null,
+    matches: item.matches ?? [],
+    newsFlowRelationship,
+    biasMatchSource: extra.biasMatchSource ?? null,
+  };
+}
+
+function extractMatchedKeywords(item = {}) {
+  return (item.matches ?? []).map((match) => match.keyword).filter(Boolean);
+}
+
+function resolveAuditHeadlineDirection(item = {}) {
+  if (item.sentimentLabel === "POSITIVE") return "positive";
+  if (item.sentimentLabel === "NEGATIVE") return "negative";
+
+  const matches = item.matches ?? [];
+  const positive = matches.filter((match) => match.direction === "positive").length;
+  const negative = matches.filter((match) => match.direction === "negative").length;
+
+  if (positive > negative) return "positive";
+  if (negative > positive) return "negative";
+  return item.sentimentLabel ? String(item.sentimentLabel).toLowerCase() : "neutral";
+}
+
+function mergeAuditHeadlines(items = []) {
+  const seen = new Set();
+  const output = [];
+
+  for (const item of items) {
+    const key = String(item.title ?? "").toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+
+  return output.slice(0, 20);
 }
 
 function inferCalendarRelatedAssets(event = {}) {

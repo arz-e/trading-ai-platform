@@ -40,33 +40,40 @@ export function buildBiasEvaluations(rows = []) {
 
 export function evaluatePrediction(current, next) {
   const predictedBias = current.bias;
-  const predictedMove = current.movePoints ?? 0;
+  const expectedMoveAvailable = hasExpectedMove(current.movePoints);
+  const predictedMove = expectedMoveAvailable ? current.movePoints : null;
 
   const nextPrice = next.currentPrice ?? 0;
   const currentPrice = current.currentPrice ?? 0;
   const actualMove = nextPrice - currentPrice;
   const actualMovePercent =
     currentPrice === 0 ? 0 : (actualMove / currentPrice) * 100;
-  const noiseThreshold = resolveNoiseThreshold(current);
-  const verdict = resolveVerdict(predictedBias, actualMove, noiseThreshold);
-  const moveError = Math.abs(Math.abs(actualMove) - Math.abs(predictedMove));
-  const moveAccuracy =
-    predictedMove === 0
-      ? 0
-      : Math.max(0, 100 - (moveError / Math.abs(predictedMove)) * 100);
   const holdingPeriodMinutes = round(
     (new Date(next.generatedAt).getTime() -
       new Date(current.generatedAt).getTime()) /
       60000
   );
+  const moveFitContext = resolveMoveFitContext(current, holdingPeriodMinutes);
+  const moveFitAvailable = expectedMoveAvailable && moveFitContext.available;
+  const noiseThreshold = resolveNoiseThreshold(current);
+  const verdict = resolveVerdict(predictedBias, actualMove, noiseThreshold);
+  const moveError = moveFitAvailable
+    ? Math.abs(Math.abs(actualMove) - Math.abs(predictedMove))
+    : null;
+  const moveAccuracy = moveFitAvailable
+    ? Math.max(0, 100 - (moveError / Math.abs(predictedMove)) * 100)
+    : null;
   const context = {
     next,
     predictedBias,
     predictedMove,
     actualMove: round(actualMove),
     actualMovePercent: round(actualMovePercent),
-    moveError: round(moveError),
-    moveAccuracy: round(moveAccuracy),
+    expectedMoveAvailable,
+    moveFitAvailable,
+    moveFitReason: moveFitContext.reason,
+    moveError: moveError === null ? null : round(moveError),
+    moveAccuracy: moveAccuracy === null ? null : round(moveAccuracy),
     holdingPeriodMinutes,
     noiseThreshold: round(noiseThreshold),
   };
@@ -76,13 +83,16 @@ export function evaluatePrediction(current, next) {
     evaluatedAgainstAt: next.generatedAt,
     predictedBias,
     predictedMove,
+    expectedMoveAvailable,
+    moveFitAvailable,
+    moveFitReason: moveFitContext.reason,
     actualMove: round(actualMove),
     actualMovePercent: round(actualMovePercent),
     noiseThreshold: round(noiseThreshold),
     verdict,
     directionCorrect: verdict === "correct",
-    moveError: round(moveError),
-    moveAccuracy: round(moveAccuracy),
+    moveError: moveError === null ? null : round(moveError),
+    moveAccuracy: moveAccuracy === null ? null : round(moveAccuracy),
     holdingPeriodMinutes,
     diagnosis: buildDiagnosis(current, verdict, context),
   };
@@ -105,6 +115,7 @@ export function buildPerformanceSummary(rows = []) {
   let correct = 0;
   let moveAccuracySum = 0;
   let count = 0;
+  let moveAccuracyCount = 0;
 
   for (const row of rows) {
     const evalResult = row.evaluation;
@@ -117,13 +128,17 @@ export function buildPerformanceSummary(rows = []) {
       correct++;
     }
 
-    moveAccuracySum += evalResult.moveAccuracy ?? 0;
+    if (evalResult.moveFitAvailable !== false && typeof evalResult.moveAccuracy === "number") {
+      moveAccuracySum += evalResult.moveAccuracy;
+      moveAccuracyCount++;
+    }
   }
 
   return {
     totalPredictions: count,
     directionAccuracy: count === 0 ? 0 : round((correct / count) * 100),
-    avgMoveAccuracy: count === 0 ? 0 : round(moveAccuracySum / count),
+    avgMoveAccuracy:
+      moveAccuracyCount === 0 ? null : round(moveAccuracySum / moveAccuracyCount),
     verdicts: countVerdicts(rows),
   };
 }
@@ -198,8 +213,8 @@ function buildDiagnosis(row, verdict, context = {}) {
   const disagreed =
     newsBias &&
     technicalBias &&
-    newsBias !== "Neutral" &&
-    technicalBias !== "Neutral" &&
+    !["Neutral", "Ranging"].includes(newsBias) &&
+    !["Neutral", "Ranging"].includes(technicalBias) &&
     newsBias !== technicalBias;
   const expectedText = formatExpectedMoveForReview(
     context.predictedBias,
@@ -210,6 +225,9 @@ function buildDiagnosis(row, verdict, context = {}) {
   )}%)`;
   const holdingText = `${context.holdingPeriodMinutes ?? 0} minutes`;
   const moveFit = resolveMoveFitLabel(context.moveAccuracy);
+  const moveFitText = context.moveFitAvailable
+    ? `Move fit was ${moveFit} at ${context.moveAccuracy}% accuracy.`
+    : `Move fit is unavailable because ${context.moveFitReason ?? "no market-derived expected range was saved."}`;
   const conflictText = disagreed
     ? ` News bias was ${newsBias} while technical bias was ${technicalBias}, so this was a mixed input.`
     : ` News and technical inputs were ${newsBias || "not available"} / ${
@@ -219,7 +237,7 @@ function buildDiagnosis(row, verdict, context = {}) {
   if (verdict === "correct") {
     return {
       label: "bias_confirmed",
-      summary: `${row.asset} moved in the ${combinedBias?.toLowerCase()} direction over ${holdingText}. The call expected ${expectedText}; the next saved /api/bias run showed ${actualText}. Move fit was ${moveFit} at ${context.moveAccuracy ?? 0}% accuracy.${conflictText}`,
+      summary: `${row.asset} moved in the ${combinedBias?.toLowerCase()} direction over ${holdingText}. The call expected ${expectedText}; the next saved /api/bias run showed ${actualText}. ${moveFitText}${conflictText}`,
       newsTechnicalDisagreement: disagreed,
     };
   }
@@ -248,19 +266,42 @@ function buildDiagnosis(row, verdict, context = {}) {
   };
 }
 
-function resolveMoveFitLabel(moveAccuracy = 0) {
+function resolveMoveFitLabel(moveAccuracy) {
+  if (typeof moveAccuracy !== "number") return "unavailable";
   if (moveAccuracy >= 70) return "good";
   if (moveAccuracy >= 35) return "fair";
   return "poor";
 }
 
-function formatExpectedMoveForReview(bias, move = 0) {
-  const amount = Math.abs(Number(move) || 0);
+function formatExpectedMoveForReview(bias, move) {
+  if (!hasExpectedMove(move)) {
+    return "no market-derived expected range";
+  }
+
+  const amount = Math.abs(move);
   const formatted = amount >= 100 ? amount.toFixed(0) : amount.toFixed(2);
 
   if (bias === "Bearish") return `${formatted} pts downside`;
   if (bias === "Bullish") return `${formatted} pts upside`;
   return `${formatted} pts range`;
+}
+
+function hasExpectedMove(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function resolveMoveFitContext(row, holdingPeriodMinutes) {
+  const basis =
+    row.expectedMoveBasis ?? row.formulaComponents?.final?.expectedMoveBasis ?? null;
+
+  if (basis?.basis === "ATR") {
+    return {
+      available: false,
+      reason: `the saved ATR range targets one trading session, while this comparison uses the next manually saved run after ${holdingPeriodMinutes} minutes`,
+    };
+  }
+
+  return { available: true, reason: null };
 }
 
 function formatSigned(value = 0) {

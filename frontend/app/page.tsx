@@ -1,6 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  BarChart3,
+  BrainCircuit,
+  CalendarDays,
+  Clock3,
+  Database,
+  FlaskConical,
+  LayoutDashboard,
+  Menu,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldCheck,
+  AlertTriangle,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 
 type Driver = {
   label: string;
@@ -57,7 +76,36 @@ type AssetCard = {
   bias: string;
   confidence: number;
   score: number;
-  movePoints: number;
+  displayScore?: number | null;
+  rawBiasScore?: number | null;
+  legacyScore?: number | null;
+  confluenceScore?: number | null;
+  movePoints: number | null;
+  rawMovePoints?: number | null;
+  expectedMoveAvailable?: boolean;
+  expectedMoveBasis?: {
+    basis?: string;
+    rawBiasScore?: number | null;
+    legacyScore?: number | null;
+    confluenceScore?: number | null;
+    edgeScore?: number | null;
+    normalizedConfluenceScore?: number | null;
+    eventRiskMultiplier?: number | null;
+    rawMovePoints?: number | null;
+    finalMovePoints?: number | null;
+    status?: string;
+    model?: string;
+    source?: string;
+    interval?: string;
+    horizon?: string;
+    lookbackSessions?: number | null;
+    atr?: number | null;
+    candleCount?: number;
+    asOf?: string | null;
+    unavailableReason?: string | null;
+    eventRiskEffect?: string;
+    formula?: string;
+  } | null;
   newsBias?: BiasBreakdown | null;
   technicalBias?: BiasBreakdown | null;
   combinedBias?: BiasBreakdown | null;
@@ -66,6 +114,11 @@ type AssetCard = {
   optionsPressure?: OptionsPressureAsset | null;
   confluence?: AdvancedConfluence | null;
   trendState?: string | null;
+  sessionProjection?: SessionProjection | null;
+  reversal?: ReversalSignal | null;
+  gex?: GexAnalysis | null;
+  cvd?: CvdAnalysis | null;
+  confluenceBreakdown?: ConfluenceBreakdown | null;
   edgeScore?: number | null;
   watchReasons?: string[];
   avoidReasons?: string[];
@@ -153,11 +206,97 @@ type AdvancedConfluence = {
   macroAlignment: string;
   optionsPressureAlignment: string;
   eventRiskAdjustment?: { score: number; level: string; reasons?: string[] };
-  components: Array<{ key: string; label: string; weight: number; score: number }>;
+  components: Array<{ key: string; label: string; weight: number; score: number; notes?: string[] }>;
   contradictions: string[];
   watchReasons: string[];
   avoidReasons: string[];
   reasons: string[];
+};
+
+type SessionProjection = {
+  bias: string;
+  confidence: number | null;
+  trendState: string;
+  session: string | null;
+  sessionStatus: string;
+  projectionStatus: "CURRENT" | "UPCOMING" | "UNKNOWN";
+  generatedAt: string | null;
+  basis: string;
+};
+
+type ReversalSignal = {
+  status: string;
+  signal: string;
+  label: string;
+  previousHigh: number | null;
+  previousLow: number | null;
+  currentPrice: number | null;
+  currentHigh: number | null;
+  currentLow: number | null;
+  crossedPreviousHigh: boolean;
+  crossedPreviousLow: boolean;
+  previousSessionAsOf: string | null;
+  source: string | null;
+  reason: string;
+};
+
+type GexAnalysis = {
+  ticker: string;
+  gexAvailable: boolean;
+  reason?: string;
+  totalGex?: number | null;
+  gammaRegime?: "positive" | "negative" | "neutral" | "unknown";
+  gammaFlipLevel?: number | null;
+  positiveGammaZones?: PriceZone[];
+  negativeGammaZones?: PriceZone[];
+  pinLevels?: number[];
+  volatilityExpansionLevels?: number[];
+  nearestGexLevel?: {
+    price: number;
+    type: "positive_gamma" | "negative_gamma" | "gamma_flip" | "pin";
+    distancePct: number;
+  } | null;
+  confidence: number;
+  method?: string;
+  source?: string;
+};
+
+type PriceZone = {
+  lower: number;
+  upper: number;
+  center: number;
+  netGex: number;
+  grossGex: number;
+};
+
+type CvdAnalysis = {
+  ticker: string;
+  cvdAvailable: boolean;
+  reason?: string;
+  cvdMethod: "real_bid_ask" | "intrabar" | "estimated" | "unavailable";
+  currentCvd: number;
+  cvdIndex: number;
+  cvdTrend: "rising" | "falling" | "flat" | "unknown";
+  priceTrend?: string;
+  bullishDivergence: boolean;
+  bearishDivergence: boolean;
+  continuationConfirmation: boolean;
+  exhaustionSignal: boolean;
+  confidence: number;
+  lookbackBars?: number;
+};
+
+type ConfluenceBreakdown = {
+  existingPatternScore: number;
+  reversalPatternScore: number;
+  continuationPatternScore: number;
+  gexScore: number;
+  cvdScore: number;
+  reversalGexAdjustment?: number;
+  reversalCvdAdjustment?: number;
+  finalReversalConfluence: number;
+  finalBiasConfluence: number;
+  notes: string[];
 };
 
 type Briefing = {
@@ -180,6 +319,23 @@ type FlashNewsItem = {
 
 type DashboardResponse = {
   generatedAt: string;
+  sessionContext?: {
+    generatedAt: string;
+    utcTime: string;
+    primarySession: {
+      name: string;
+      status: "RUNNING" | "CLOSED";
+      projectionStatus: "CURRENT" | "UPCOMING";
+      minutesRemaining: number;
+      minutesUntilOpen: number;
+    };
+    sessions: Array<{
+      name: string;
+      status: "RUNNING" | "CLOSED";
+      minutesRemaining: number;
+      minutesUntilOpen: number;
+    }>;
+  };
   marketFlow?: MarketFlowSnapshot;
   optionsPressure?: OptionsPressureSnapshot;
   regime?: {
@@ -220,7 +376,7 @@ type HistorySummaryResponse = {
     bias: string;
     confidence: number;
     score: number;
-    movePoints: number;
+    movePoints: number | null;
     analysis: string;
     generatedAt: string;
   } | null;
@@ -230,7 +386,7 @@ type HistorySummaryResponse = {
     previousBias?: string;
     confidenceDelta?: number;
     scoreDelta?: number;
-    moveDelta?: number;
+    moveDelta?: number | null;
     addedDrivers?: string[];
     removedDrivers?: string[];
   } | null;
@@ -244,7 +400,7 @@ type HistorySummaryResponse = {
     bias: string;
     confidence: number;
     score: number;
-    movePoints: number;
+    movePoints: number | null;
   }>;
 };
 
@@ -256,7 +412,7 @@ type BiasShift = {
   previousBias?: string;
   confidenceDelta?: number;
   scoreDelta?: number;
-  moveDelta?: number;
+  moveDelta?: number | null;
   addedDrivers?: string[];
   removedDrivers?: string[];
 };
@@ -347,6 +503,8 @@ type WatchlistQuote = WatchlistItem & {
   quoteStatus?: string;
   error?: string | null;
   raw?: Record<string, unknown>;
+  gex?: GexAnalysis | null;
+  cvd?: CvdAnalysis | null;
 };
 
 type WatchlistResponse = {
@@ -453,14 +611,17 @@ type EvaluationDetail = {
   evaluatedAgainstId: number;
   evaluatedAgainstAt: string;
   predictedBias: string;
-  predictedMove: number;
+  predictedMove: number | null;
   actualMove: number;
   actualMovePercent: number;
   noiseThreshold: number;
   verdict: string;
   directionCorrect: boolean;
-  moveError: number;
-  moveAccuracy: number;
+  moveError: number | null;
+  moveAccuracy: number | null;
+  expectedMoveAvailable?: boolean;
+  moveFitAvailable?: boolean;
+  moveFitReason?: string | null;
   holdingPeriodMinutes: number;
   diagnosis?: {
     label: string;
@@ -475,7 +636,7 @@ type EvaluationRow = {
   bias: string;
   confidence: number;
   score: number;
-  movePoints: number;
+  movePoints: number | null;
   currentPrice: number;
   analysis: string;
   reasons?: string[];
@@ -495,7 +656,7 @@ type EvaluationsResponse = {
   summary?: {
     totalPredictions?: number;
     directionAccuracy?: number;
-    avgMoveAccuracy?: number;
+    avgMoveAccuracy?: number | null;
     verdicts?: Record<string, number>;
   };
   evaluations: EvaluationRow[];
@@ -526,13 +687,18 @@ const labelMap: Record<string, string> = {
 };
 
 const assetOrder = ["ES", "NQ", "YM", "GOLD", "DXY", "USOIL"];
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:5000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
-const navItems: Array<{ id: AppView; label: string; disabled?: boolean }> = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "upcoming-news", label: "Upcoming News" },
-  { id: "evaluations", label: "Evaluations" },
-  { id: "ai-analysis", label: "AI Analysis", disabled: true },
+const navItems: Array<{
+  id: AppView;
+  label: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+}> = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "upcoming-news", label: "Upcoming News", icon: CalendarDays },
+  { id: "evaluations", label: "Evaluations", icon: FlaskConical },
+  { id: "ai-analysis", label: "AI Analysis", icon: BrainCircuit, disabled: true },
 ];
 
 export default function Home() {
@@ -912,17 +1078,26 @@ export default function Home() {
   );
   const selectedAsset = groupedAssets.find((a) => a.symbol === selected) ?? groupedAssets[0] ?? null;
   const sessions = mounted ? getSessionInfos(now) : [];
+  const primarySession = dashboard?.sessionContext?.primarySession ?? null;
 
   function getBiasColor(value?: string) {
-    if (value === "Bullish") return "text-green-400 bg-green-900/30 border-green-700";
-    if (value === "Bearish") return "text-red-400 bg-red-900/30 border-red-700";
-    if (value === "N/A") return "text-gray-300 bg-gray-800 border-gray-700";
+    const displayValue = displayBias(value);
+    if (displayValue === "Bullish") return "text-green-400 bg-green-900/30 border-green-700";
+    if (displayValue === "Bearish") return "text-red-400 bg-red-900/30 border-red-700";
+    if (displayValue === "N/A") return "text-gray-300 bg-gray-800 border-gray-700";
     return "text-yellow-300 bg-yellow-900/20 border-yellow-700";
   }
 
   function getChangeColor(value?: number | null) {
     if (typeof value !== "number") return "text-gray-400";
     return value >= 0 ? "text-green-400" : "text-red-400";
+  }
+
+  function getExpectedMoveColor(bias?: string, move?: number | null) {
+    if (typeof move !== "number" || Number.isNaN(move)) return "text-gray-400";
+    if (bias === "Bullish") return "text-green-400";
+    if (bias === "Bearish") return "text-red-400";
+    return "text-cyan-300";
   }
 
   function getDriverColor(direction?: string) {
@@ -957,89 +1132,118 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0a0f1a] text-white p-6">
-      <div className="mx-auto max-w-7xl">
-        <AppShellHeader
-          activeView={activeView}
-          menuOpen={menuOpen}
-          onToggleMenu={() => setMenuOpen((value) => !value)}
-          onSelectView={(view) => {
-            setActiveView(view);
-            setMenuOpen(false);
-          }}
-        />
+    <main className="app-shell text-white">
+      <a
+        href="#main-content"
+        className="fixed left-3 top-3 z-50 -translate-y-20 rounded-md bg-cyan-500 px-3 py-2 text-sm font-semibold text-slate-950 focus:translate-y-0"
+      >
+        Skip to content
+      </a>
+      <AppShellHeader
+        activeView={activeView}
+        menuOpen={menuOpen}
+        onToggleMenu={() => setMenuOpen((value) => !value)}
+        onSelectView={(view) => {
+          setActiveView(view);
+          setMenuOpen(false);
+        }}
+      />
+
+      <div className="app-workspace">
+        <div id="main-content" className="app-content" tabIndex={-1}>
 
         {activeView === "dashboard" ? (
           <>
-        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="dashboard-stack">
+        <div className="dashboard-command page-command">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Hybrid Trader Dashboard</h1>
-            <p className="mt-2 text-sm text-gray-400">
-              Macro bias engine with event risk, drivers, briefing, charts, and shift tracking
+            <h1>Market Intelligence</h1>
+            <p>
+              Deterministic news, technical, flow, and event-risk context across the core market set.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <div className="rounded-xl border border-gray-800 bg-[#111827] px-4 py-2 text-sm text-gray-300">
-              Auto refresh: 15s
+          <div className="command-actions">
+            <div className="command-chip">
+              <Clock3 aria-hidden="true" size={15} />
+              Refresh <strong>15s</strong>
             </div>
-            <div className="rounded-xl border border-gray-800 bg-[#111827] px-4 py-2 text-sm text-gray-300">
-              Regime: {dashboard?.regime?.regime ?? "--"}
+            <div className="command-chip">
+              <Activity aria-hidden="true" size={15} />
+              Regime <strong>{dashboard?.regime?.regime?.replaceAll("_", " ") ?? "--"}</strong>
             </div>
-            <div className="rounded-xl border border-gray-800 bg-[#111827] px-4 py-2 text-sm text-gray-300">
-              Event Risk: {dashboard?.eventRisk?.level ?? "--"}
+            <div className="command-chip">
+              <CalendarDays aria-hidden="true" size={15} />
+              Event risk <strong>{dashboard?.eventRisk?.level ?? "--"}</strong>
             </div>
             <button
               type="button"
               onClick={logCurrentBiasRun}
               disabled={logStatus.state === "saving"}
-              className="rounded-xl border border-cyan-700 bg-cyan-950/30 px-4 py-2 text-sm font-semibold text-cyan-200 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+              className="command-primary inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
+              <Save aria-hidden="true" size={15} />
               {logStatus.state === "saving" ? "Saving..." : "Save Bias Run"}
             </button>
           </div>
         </div>
 
-        <BiasLoggingCard systemStatus={systemStatus} logStatus={logStatus} />
+        <div className="dashboard-audit">
+          <BiasLoggingCard systemStatus={systemStatus} logStatus={logStatus} />
+        </div>
 
-        <DataSourceHealthCard systemStatus={systemStatus} />
+        <div className="dashboard-health">
+          <DataSourceHealthCard systemStatus={systemStatus} />
+        </div>
 
-        <MarketFlowProxyCard
-          marketFlow={dashboard?.marketFlow}
-          headlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
-        />
+        <div className="dashboard-flow">
+          <MarketFlowProxyCard
+            marketFlow={dashboard?.marketFlow}
+            headlines={dashboard?.newsImpactSummary?.topHeadlines ?? []}
+          />
+        </div>
 
-        <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
-          <div className="mb-4 flex items-center justify-between">
+        <div className="dashboard-sessions session-panel mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Market Sessions</p>
-              <h2 className="mt-2 text-2xl font-bold">
-                UTC {mounted ? formatUtcClock(now) : "--:--:--"}
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Main Session Projection</p>
+              <h2 className="mt-2 text-xl font-bold sm:text-2xl">
+                {primarySession?.name ?? "Session loading"}
+                <span className="ml-2 text-sm font-medium text-cyan-300">
+                  {primarySession?.projectionStatus === "CURRENT"
+                    ? "Current"
+                    : primarySession?.projectionStatus === "UPCOMING"
+                      ? "Upcoming"
+                      : ""}
+                </span>
               </h2>
+              <p className="mt-1 text-xs text-gray-400">
+                Directional projections below target this session window.
+              </p>
             </div>
-            <div className="text-sm text-gray-400">
-              Based on your device time converted to UTC
+            <div className="data-number text-sm text-gray-400">
+              UTC {mounted ? formatUtcClock(now) : "--:--:--"}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="session-grid grid grid-cols-3 gap-2 sm:gap-3">
             {mounted
               ? sessions.map((session) => (
                   <div
                     key={session.name}
-                    className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4"
+                    className="session-card rounded-2xl border border-gray-800 bg-[#0d1423] p-3 sm:p-4"
                   >
-                    <div className="flex items-center justify-between">
-                      <p className="text-lg font-semibold">{session.name}</p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-sm font-semibold sm:text-lg">{session.name}</p>
                       <span
-                        className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getSessionStatusStyle(
+                        className={`w-fit rounded-lg border px-2 py-1 text-[10px] font-semibold sm:px-3 sm:text-xs ${getSessionStatusStyle(
                           session.status
                         )}`}
                       >
                         {session.status === "RUNNING" ? "Running" : "Closed"}
                       </span>
                     </div>
-                    <p className="mt-3 text-sm text-gray-300">{session.message}</p>
+                    <p className="mt-3 hidden text-sm text-gray-300 sm:block">{session.message}</p>
                   </div>
                 ))
               : ["Asia", "London", "New York"].map((session) => (
@@ -1059,7 +1263,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-6 grid grid-cols-1 gap-4 xl:grid-cols-4">
+        <div className="dashboard-market-meta mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-2xl border border-gray-800 bg-[#111827] p-5">
             <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Macro Regime</p>
             <h2 className="mt-2 text-2xl font-bold">
@@ -1099,12 +1303,12 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-6">
+        <div className="dashboard-briefing mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Macro Briefing</p>
               <h2 className={`mt-2 text-2xl font-bold ${getToneColor(dashboard?.briefing?.macroTone)}`}>
-                {dashboard?.briefing?.macroTone?.replaceAll("_", " ") ?? "NEUTRAL"}
+                {dashboard?.briefing?.macroTone?.replaceAll("_", " ") ?? "RANGING"}
               </h2>
             </div>
           </div>
@@ -1161,7 +1365,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-6">
+        <div className="dashboard-news mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-6">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-semibold">Flash News</h2>
             <span className="text-sm text-gray-400">Top market-moving headlines</span>
@@ -1211,6 +1415,7 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="dashboard-primary">
         {loading ? (
           <div className="rounded-2xl border border-gray-800 bg-[#111827] p-6">Loading...</div>
         ) : (
@@ -1228,7 +1433,17 @@ export default function Home() {
               onRefresh={fetchWatchlistQuotes}
             />
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <div className="section-divider">
+              <div>
+                <h2>Core Markets &amp; Watchlist</h2>
+                <p>Select a market to inspect its full deterministic context.</p>
+              </div>
+              <span className="data-number hidden text-xs text-gray-400 sm:inline">
+                {groupedAssets.length} instruments
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {groupedAssets.map((item) => (
                 <div
                   key={item.symbol}
@@ -1241,26 +1456,29 @@ export default function Home() {
                       setSelected(item.symbol);
                     }
                   }}
-                  className={`rounded-2xl border p-5 text-left shadow-lg transition ${
+                  className={`min-h-[220px] rounded-2xl border p-4 text-left transition ${
                     selected === item.symbol
-                      ? "border-cyan-500 bg-[#131c2f]"
+                      ? "border-cyan-500 bg-[#131c2f] ring-1 ring-cyan-500/20"
                       : "border-gray-800 bg-[#111827] hover:bg-[#141b2b]"
                   }`}
                 >
-                  <div className="flex items-start justify-between">
-                    <div>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <p className={`text-xs uppercase text-gray-400 ${item.isCustom ? "tracking-normal" : "tracking-[0.2em]"}`}>
                         {item.symbol}
                       </p>
-                      <h2 className="mt-2 text-lg font-semibold">{item.name}</h2>
+                      <h2 className="mt-2 break-words text-lg font-semibold">{item.name}</h2>
                     </div>
-                    <span
-                      className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getBiasColor(
-                        item.hasBiasData ? item.bias : "N/A"
-                      )}`}
-                    >
-                      {item.hasBiasData ? item.bias : "Quote only"}
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-1.5">
+                      <span
+                        className={`rounded-lg border px-3 py-1 text-xs font-semibold ${getBiasColor(
+                          item.hasBiasData ? item.bias : "N/A"
+                        )}`}
+                      >
+                        {item.hasBiasData ? displayBias(item.bias) : "Quote only"}
+                      </span>
+                      {item.hasBiasData ? <ReversalPill reversal={item.reversal} /> : null}
+                    </div>
                   </div>
 
                   {item.isCustom && item.watchlistId ? (
@@ -1279,7 +1497,7 @@ export default function Home() {
                   ) : null}
 
                   <div className="mt-5">
-                    <p className="text-3xl font-bold">
+                    <p className="data-number text-2xl font-semibold">
                       {formatQuoteValue(item.price)}
                     </p>
                     <p className={`mt-2 text-sm font-medium ${getChangeColor(item.change)}`}>
@@ -1298,7 +1516,7 @@ export default function Home() {
                     </span>
                   </div>
 
-                  <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-[#1f2937]">
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-[#1f2937]">
                     <div
                       className="h-full bg-cyan-300"
                       style={{ width: `${item.hasBiasData ? item.confidence : 0}%` }}
@@ -1306,49 +1524,76 @@ export default function Home() {
                   </div>
 
                   <div className="mt-4 flex items-center justify-between text-sm">
-                    <span className="text-gray-400">Expected Move</span>
-                    <span className={item.hasBiasData ? getChangeColor(item.movePoints) : "text-gray-400"}>
+                    <span className="text-gray-400">Expected Move (1D)</span>
+                    <span className={item.hasBiasData ? getExpectedMoveColor(item.bias, item.movePoints) : "text-gray-400"}>
                       {formatExpectedMoveValue(item)}
+                    </span>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 border-t border-gray-800 pt-3 text-xs">
+                    <span className="text-gray-400">
+                      {item.sessionProjection?.session ?? primarySession?.name ?? "Session"} projection
+                    </span>
+                    <span className="font-semibold text-gray-100">
+                      {item.hasBiasData
+                        ? displayBias(item.sessionProjection?.bias ?? item.bias)
+                        : "N/A"}
                     </span>
                   </div>
                 </div>
               ))}
             </div>
 
-            <div className="mt-8 grid grid-cols-1 gap-4 xl:grid-cols-12">
-              <div className="xl:col-span-7 rounded-2xl border border-gray-800 bg-[#111827] p-6">
+            <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-12">
+              <div className="rounded-2xl border border-gray-800 bg-[#111827] p-5 xl:col-span-8">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-gray-400">{selectedAsset?.name ?? labelMap[selected] ?? selected}</p>
-                    <h2 className="mt-1 text-3xl font-bold">{selectedAsset?.symbol ?? selected}</h2>
+                    <h2 className="data-number mt-1 text-2xl font-semibold">{selectedAsset?.symbol ?? selected}</h2>
                   </div>
 
-                  <div
-                    className={`rounded-xl border px-4 py-2 text-sm font-semibold ${getBiasColor(
-                      selectedAsset?.hasBiasData ? selectedAsset?.bias : "N/A"
-                    )}`}
-                  >
-                    {selectedAsset?.hasBiasData ? selectedAsset.bias : "N/A"}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <div
+                      className={`rounded-xl border px-4 py-2 text-sm font-semibold ${getBiasColor(
+                        selectedAsset?.hasBiasData ? selectedAsset?.bias : "N/A"
+                      )}`}
+                    >
+                      {selectedAsset?.hasBiasData ? displayBias(selectedAsset.bias) : "N/A"}
+                    </div>
+                    {selectedAsset?.hasBiasData ? <ReversalPill reversal={selectedAsset.reversal} /> : null}
                   </div>
                 </div>
 
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
                     <p className="text-sm text-gray-400">Confidence</p>
-                    <p className="mt-2 text-3xl font-bold">
+                    <p className="data-number mt-2 text-2xl font-semibold">
                       {selectedAsset?.hasBiasData ? `${formatScore(selectedAsset.confidence)}%` : "N/A"}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
-                    <p className="text-sm text-gray-400">Score</p>
-                    <p className="mt-2 text-3xl font-bold">
+                    <p className="text-sm text-gray-400">Final Score</p>
+                    <p className="data-number mt-2 text-2xl font-semibold">
                       {selectedAsset?.hasBiasData ? formatScore(selectedAsset.score) : "N/A"}
                     </p>
                   </div>
                   <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
-                    <p className="text-sm text-gray-400">Expected Move</p>
-                    <p className={`mt-2 text-3xl font-bold ${selectedAsset?.hasBiasData ? getChangeColor(selectedAsset?.movePoints) : "text-gray-400"}`}>
+                    <p className="text-sm text-gray-400">Expected Move (1D)</p>
+                    <p className={`data-number mt-2 text-2xl font-semibold ${selectedAsset?.hasBiasData ? getExpectedMoveColor(selectedAsset?.bias, selectedAsset?.movePoints) : "text-gray-400"}`}>
                       {formatExpectedMoveValue(selectedAsset)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
+                    <p className="text-sm text-gray-400">Session Projection</p>
+                    <p className="mt-2 text-lg font-semibold">
+                      {selectedAsset?.hasBiasData
+                        ? displayBias(selectedAsset.sessionProjection?.bias ?? selectedAsset.bias)
+                        : "N/A"}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {selectedAsset?.sessionProjection?.session ?? primarySession?.name ?? "--"} / {selectedAsset?.sessionProjection?.projectionStatus?.toLowerCase() ?? "--"}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Prev H {formatQuoteValue(selectedAsset?.reversal?.previousHigh)} / L {formatQuoteValue(selectedAsset?.reversal?.previousLow)}
                     </p>
                   </div>
                 </div>
@@ -1377,6 +1622,8 @@ export default function Home() {
                   <QuoteOnlyDetailsPanel asset={selectedAsset} />
                 ) : null}
 
+                {selectedAsset ? <MarketStructurePanel asset={selectedAsset} /> : null}
+
                 {selectedAsset?.hasBiasData ? (
                   <>
                 <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
@@ -1396,8 +1643,12 @@ export default function Home() {
                     />
                     <MiniChartCard
                       title="Expected Move"
-                      values={historySummary?.chartPoints.map((p) => p.movePoints) ?? []}
-                      labels={historySummary?.chartPoints.map((p) => formatShortTime(p.generatedAt)) ?? []}
+                      values={(historySummary?.chartPoints ?? []).flatMap((point) =>
+                        typeof point.movePoints === "number" ? [point.movePoints] : []
+                      )}
+                      labels={(historySummary?.chartPoints ?? []).flatMap((point) =>
+                        typeof point.movePoints === "number" ? [formatShortTime(point.generatedAt)] : []
+                      )}
                       valueColor="text-green-300"
                     />
                   </div>
@@ -1444,7 +1695,7 @@ export default function Home() {
                 ) : null}
               </div>
 
-              <div className="xl:col-span-5 space-y-4">
+              <div className="space-y-4 xl:col-span-4">
                 <div className="rounded-2xl border border-gray-800 bg-[#111827] p-6">
                   <h3 className="text-lg font-semibold">Confluence Drivers</h3>
                   <div className="mt-4 space-y-3">
@@ -1525,6 +1776,8 @@ export default function Home() {
             </div>
           </>
         )}
+        </div>
+        </div>
           </>
         ) : activeView === "upcoming-news" ? (
           <UpcomingNewsView
@@ -1565,6 +1818,7 @@ export default function Home() {
         ) : (
           <PlaceholderView view={activeView} />
         )}
+        </div>
       </div>
     </main>
   );
@@ -1584,52 +1838,88 @@ function AppShellHeader({
   const activeLabel = navItems.find((item) => item.id === activeView)?.label ?? "Dashboard";
 
   return (
-    <div className="relative mb-6">
-      <div className="flex items-center justify-between rounded-2xl border border-gray-800 bg-[#111827] px-4 py-3">
-        <div className="flex items-center gap-3">
+    <>
+      {menuOpen ? (
+        <button
+          type="button"
+          className="mobile-nav-scrim"
+          onClick={onToggleMenu}
+          aria-label="Close navigation"
+        />
+      ) : null}
+
+      <aside className="app-sidebar" data-open={menuOpen} aria-label="Primary navigation">
+        <div className="app-brand">
+          <div className="app-brand-mark" aria-hidden="true">
+            <BarChart3 size={19} strokeWidth={1.8} />
+          </div>
+          <div>
+            <p className="app-brand-name">Trading AI</p>
+            <p className="app-brand-note">Research workstation</p>
+          </div>
           <button
             type="button"
+            className="ml-auto grid h-11 w-11 place-items-center rounded-md text-gray-400 transition hover:bg-white/5 hover:text-white"
             onClick={onToggleMenu}
-            className="flex h-10 w-10 flex-col items-center justify-center gap-1.5 rounded-xl border border-gray-700 bg-[#0d1423] transition hover:border-cyan-500"
-            aria-label="Open navigation"
+            aria-label="Close navigation"
           >
-            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
-            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
-            <span className="h-0.5 w-5 rounded-full bg-gray-200" />
+            <X size={19} />
           </button>
-
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Trading AI Platform</p>
-            <p className="text-lg font-semibold">{activeLabel}</p>
-          </div>
         </div>
 
-        <div className="h-10 w-10" aria-hidden="true" />
-      </div>
-
-      {menuOpen ? (
-        <div className="absolute left-0 top-16 z-20 w-72 rounded-2xl border border-gray-800 bg-[#111827] p-3 shadow-2xl">
-          <div className="space-y-2">
-            {navItems.map((item) => (
+        <p className="app-nav-label">Workspace</p>
+        <nav className="app-nav">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            return (
               <button
                 key={item.id}
                 type="button"
                 disabled={item.disabled}
                 onClick={() => onSelectView(item.id)}
-                className={`w-full rounded-xl border px-4 py-3 text-left text-sm font-semibold transition ${
-                  activeView === item.id
-                    ? "border-cyan-500 bg-cyan-950/30 text-cyan-200"
-                    : "border-gray-800 bg-[#0d1423] text-gray-300"
-                } ${item.disabled ? "cursor-not-allowed opacity-50" : ""}`}
+                className="app-nav-item"
+                data-active={activeView === item.id}
+                aria-current={activeView === item.id ? "page" : undefined}
               >
-                {item.label}
-                {item.disabled ? " · Coming soon" : ""}
+                <Icon aria-hidden="true" size={18} strokeWidth={1.8} />
+                <span>{item.label}</span>
+                {item.disabled ? <span className="app-nav-badge">Soon</span> : null}
               </button>
-            ))}
+            );
+          })}
+        </nav>
+
+        <div className="app-sidebar-footer">
+          <div className="app-system-line">
+            <span className="app-system-dot" aria-hidden="true" />
+            <span>Deterministic engine</span>
+          </div>
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-gray-500">
+            <Database aria-hidden="true" size={14} />
+            Manual audit logging
           </div>
         </div>
-      ) : null}
-    </div>
+      </aside>
+
+      <header className="app-mobile-header">
+        <div className="flex min-w-0 items-center gap-3">
+          <button
+            type="button"
+            onClick={onToggleMenu}
+            className="mobile-menu-button"
+            aria-label="Open navigation"
+            aria-expanded={menuOpen}
+          >
+            <Menu size={20} />
+          </button>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{activeLabel}</p>
+            <p className="truncate text-[11px] text-gray-400">Trading AI Research</p>
+          </div>
+        </div>
+        <span className="app-system-dot" aria-label="Engine active" />
+      </header>
+    </>
   );
 }
 
@@ -1649,48 +1939,57 @@ function BiasLoggingCard({
     "Save the current deterministic snapshot into the append-only experiment log.";
 
   return (
-    <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Experiment Logging</p>
-          <h2 className="mt-2 text-xl font-semibold">Bias Run Audit Trail</h2>
-          <p className="mt-3 max-w-4xl text-sm leading-7 text-gray-300">
-            Saving records the full research snapshot: market prices, source health, weighted news matches,
-            calendar risk, technical context, formula components, and final bias output. Live dashboard refreshes
-            do not automatically save rows.
-          </p>
+    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-4" aria-labelledby="audit-title">
+      <div className="grid gap-4 lg:grid-cols-[minmax(280px,1.4fr)_repeat(3,minmax(120px,0.6fr))] lg:items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-cyan-900/70 bg-cyan-950/30 text-cyan-300">
+            <Database aria-hidden="true" size={17} />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="audit-title" className="text-sm font-semibold">Experiment audit trail</h2>
+              <StatusPill
+                status={
+                  logStatus.state === "error"
+                    ? "ERROR"
+                    : logStatus.state === "saved"
+                      ? "OK"
+                      : latest?.runId
+                        ? "READY"
+                        : "IDLE"
+                }
+              />
+            </div>
+            <p className="mt-1 text-xs leading-5 text-gray-400">{statusText}</p>
+          </div>
         </div>
 
-        <StatusPill
-          status={
-            logStatus.state === "error"
-              ? "ERROR"
-              : logStatus.state === "saved"
-                ? "OK"
-                : latest?.runId
-                  ? "READY"
-                  : "IDLE"
-          }
-        />
-      </div>
-
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <MetricCard
-          label="Last Saved Run"
+        <AuditStat
+          label="Last run"
           value={latest?.runId ? `#${latest.runId}` : "--"}
-          helper={latest?.loggedAt ? formatDateTime(latest.loggedAt) : "no saved run this session"}
+          detail={latest?.loggedAt ? formatDateTime(latest.loggedAt) : "Not saved this session"}
         />
-        <MetricCard
-          label="Saved Assets"
+        <AuditStat
+          label="Assets"
           value={latest?.assetCount ?? "--"}
-          helper={`${latest?.headlineCount ?? "--"} headlines captured`}
+          detail="Saved in latest run"
         />
-        <MetricCard
-          label="Save Status"
-          value={logStatus.state === "idle" ? "Ready" : logStatus.state}
-          helper={statusText}
+        <AuditStat
+          label="News context"
+          value={latest?.headlineCount ?? "--"}
+          detail="Headlines captured"
         />
       </div>
+    </section>
+  );
+}
+
+function AuditStat({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return (
+    <div className="border-t border-gray-800 pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-500">{label}</p>
+      <p className="data-number mt-1 text-lg font-semibold text-gray-100">{value}</p>
+      <p className="mt-0.5 truncate text-[11px] text-gray-500" title={detail}>{detail}</p>
     </div>
   );
 }
@@ -1700,29 +1999,30 @@ function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | n
   const calendar = systemStatus?.dataSources?.calendar ?? null;
   const marketProviders = Object.values(systemStatus?.dataSources?.marketProviders ?? {});
   const degraded = isDataDegraded(systemStatus);
+  const HealthIcon = degraded ? AlertTriangle : ShieldCheck;
 
   return (
-    <div className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Data Source Health</p>
-          <h2 className="mt-2 text-xl font-semibold">
-            {degraded ? "Degraded data sources" : "Sources operational"}
-          </h2>
-        </div>
+    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-4" aria-labelledby="health-title">
+      <details open={degraded}>
+        <summary className="flex min-h-11 list-none items-center justify-between gap-4 rounded-md outline-none marker:hidden">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-md border ${degraded ? "border-yellow-800 bg-yellow-950/30 text-yellow-300" : "border-green-900 bg-green-950/30 text-green-300"}`}>
+              <HealthIcon aria-hidden="true" size={17} />
+            </div>
+            <div className="min-w-0">
+              <h2 id="health-title" className="text-sm font-semibold">Data source health</h2>
+              <p className="mt-0.5 text-xs text-gray-400">
+                {degraded ? "One or more sources need attention" : "Database, market, calendar, and news checks"}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <StatusPill status={degraded ? "DEGRADED" : "OK"} />
+            <span className="text-xs text-gray-500">Details</span>
+          </div>
+        </summary>
 
-        <span
-          className={`w-fit rounded-xl border px-3 py-1 text-xs font-semibold ${
-            degraded
-              ? "border-yellow-700 bg-yellow-900/20 text-yellow-300"
-              : "border-green-700 bg-green-900/20 text-green-300"
-          }`}
-        >
-          {degraded ? "Warning" : "Healthy"}
-        </span>
-      </div>
-
-      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-4">
+      <div className="mt-4 grid grid-cols-1 gap-3 border-t border-gray-800 pt-4 xl:grid-cols-4">
         <div className="rounded-2xl border border-gray-800 bg-[#0d1423] p-4">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold">Database</p>
@@ -1811,7 +2111,8 @@ function DataSourceHealthCard({ systemStatus }: { systemStatus: SystemStatus | n
           </div>
         </div>
       </div>
-    </div>
+      </details>
+    </section>
   );
 }
 
@@ -1847,42 +2148,48 @@ function WatchlistSearchBar({
   );
 
   return (
-    <section className="mb-6 rounded-2xl border border-gray-800 bg-[#111827] p-5">
+    <section className="mb-4 rounded-2xl border border-gray-800 bg-[#111827] p-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Add Symbol</p>
-          <h2 className="mt-2 text-xl font-semibold">Search Watchlist</h2>
+          <h2 className="text-sm font-semibold">Watchlist search</h2>
+          <p className="mt-1 text-xs text-gray-400">Add quote-only symbols without changing the core bias engine.</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-sm text-gray-400">
-          <span>{enabledCount} enabled</span>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+          <span className="data-number">{enabledCount} enabled</span>
           <button
             type="button"
             onClick={onRefresh}
             disabled={loading}
-            className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-700 bg-[#0d1423] px-3 text-xs font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:opacity-60"
           >
+            <RefreshCw aria-hidden="true" size={14} className={loading ? "animate-spin" : ""} />
             {loading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_120px]">
+      <label htmlFor="watchlist-symbol-search" className="mt-4 block text-xs font-semibold text-gray-300">
+        Symbol or company
+      </label>
+      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_112px]">
         <input
+          id="watchlist-symbol-search"
           value={symbolQuery}
           onChange={(event) => onQueryChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") onSearch();
           }}
-          placeholder="Search symbol, company, forex pair..."
-          className="rounded-xl border border-gray-800 bg-[#0d1423] px-4 py-3 text-sm text-gray-100 outline-none transition placeholder:text-gray-600 focus:border-cyan-500"
+          placeholder="AAPL, AMD, Microsoft..."
+          className="min-h-11 rounded-xl border border-gray-800 bg-[#0d1423] px-3 text-sm text-gray-100 outline-none transition placeholder:text-gray-600 focus:border-cyan-500"
         />
         <button
           type="button"
           onClick={onSearch}
           disabled={searchLoading}
-          className="rounded-xl border border-cyan-700 bg-cyan-950/30 px-4 py-3 text-sm font-semibold text-cyan-200 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-cyan-700 bg-cyan-950/30 px-4 text-sm font-semibold text-cyan-200 transition hover:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
+          <Search aria-hidden="true" size={15} />
           {searchLoading ? "Searching..." : "Search"}
         </button>
       </div>
@@ -1911,8 +2218,9 @@ function WatchlistSearchBar({
                   type="button"
                   onClick={() => onAdd(result)}
                   disabled={alreadyEnabled}
-                  className="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-500"
+                  className="inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg border border-gray-700 px-3 text-xs font-semibold text-gray-200 transition hover:border-cyan-500 disabled:cursor-not-allowed disabled:border-gray-800 disabled:text-gray-500"
                 >
+                  {!alreadyEnabled ? <Plus aria-hidden="true" size={13} /> : null}
                   {alreadyEnabled ? "Added" : "Add"}
                 </button>
               </div>
@@ -2004,7 +2312,7 @@ function FlowPressureRow({ row }: { row: FlowRow }) {
   const isNeutral = row.direction === "neutral" || row.flowScore === 0;
   const isPositive = !isNeutral && (row.flowScore > 0 || row.direction === "inflow");
   const width = `${Math.min(100, Math.abs(row.flowScore))}%`;
-  const directionLabel = row.direction === "inflow" ? "Inflow" : row.direction === "outflow" ? "Outflow" : "Neutral";
+  const directionLabel = row.direction === "inflow" ? "Inflow" : row.direction === "outflow" ? "Outflow" : "Flat";
   const reason = row.reasons?.[0];
   const directionClass = isNeutral ? "text-gray-300" : isPositive ? "text-green-300" : "text-red-300";
 
@@ -2072,6 +2380,8 @@ function StatusPill({ status }: { status: string }) {
   const className =
     normalized === "OK"
       ? "border-green-700 bg-green-900/20 text-green-300"
+      : normalized === "ERROR" || normalized === "UNAVAILABLE"
+        ? "border-red-800 bg-red-950/30 text-red-300"
       : normalized === "DISABLED"
         ? "border-gray-700 bg-gray-800 text-gray-300"
         : normalized === "UNKNOWN"
@@ -2079,7 +2389,8 @@ function StatusPill({ status }: { status: string }) {
           : "border-yellow-700 bg-yellow-900/20 text-yellow-300";
 
   return (
-    <span className={`shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${className}`}>
+    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold ${className}`} role="status">
+      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
       {normalized}
     </span>
   );
@@ -2154,6 +2465,79 @@ function QuoteOnlyDetailsPanel({ asset }: { asset: GroupedAsset | null }) {
   );
 }
 
+function MarketStructurePanel({ asset }: { asset: GroupedAsset }) {
+  const gex = asset.gex;
+  const cvd = asset.cvd;
+  const breakdown = asset.confluenceBreakdown;
+  const divergence = cvd?.bullishDivergence
+    ? "Bullish"
+    : cvd?.bearishDivergence
+      ? "Bearish"
+      : "None";
+  const nearestGex = gex?.nearestGexLevel
+    ? `${formatQuoteValue(gex.nearestGexLevel.price)} / ${gex.nearestGexLevel.type.replaceAll("_", " ")}`
+    : "--";
+  const explanation = breakdown?.notes?.length
+    ? breakdown.notes
+    : [gex?.reason, cvd?.reason].filter((item): item is string => Boolean(item));
+
+  return (
+    <details className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.08em] text-gray-400">Market Structure</p>
+          <h3 className="mt-1 text-lg font-semibold">GEX / CVD Confluence</h3>
+        </div>
+        <span className="text-xs font-semibold text-cyan-300">Expand</span>
+      </summary>
+
+      <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StructureMetric
+          label="GEX Status"
+          value={gex?.gexAvailable ? "Available" : "Unavailable"}
+          helper={gex?.gexAvailable ? `${gex.gammaRegime ?? "unknown"} gamma` : gex?.reason ?? "No validated chain"}
+        />
+        <StructureMetric label="Nearest GEX" value={nearestGex} helper={gex?.gammaFlipLevel ? `Flip ${formatQuoteValue(gex.gammaFlipLevel)}` : "No flip identified"} />
+        <StructureMetric
+          label="CVD Index"
+          value={cvd?.cvdAvailable ? formatScore(cvd.cvdIndex) : "N/A"}
+          helper={`${cvd?.cvdTrend ?? "unknown"} / ${cvd?.cvdMethod ?? "unavailable"}`}
+        />
+        <StructureMetric label="Divergence" value={divergence} helper={cvd?.exhaustionSignal ? "Exhaustion detected" : "No exhaustion"} />
+        <StructureMetric
+          label="Reversal Confluence"
+          value={typeof breakdown?.finalReversalConfluence === "number" ? formatScore(breakdown.finalReversalConfluence) : "N/A"}
+          helper={asset.reversal?.label ?? "No reversal model"}
+        />
+        <StructureMetric
+          label="Bias Confluence"
+          value={typeof breakdown?.finalBiasConfluence === "number" ? formatScore(breakdown.finalBiasConfluence) : "N/A"}
+          helper={`GEX ${formatScoreOrDash(breakdown?.gexScore)} / CVD ${formatScoreOrDash(breakdown?.cvdScore)}`}
+        />
+      </div>
+
+      <div className="mt-4 rounded-xl border border-gray-800 bg-[#111827] p-4">
+        <h4 className="text-sm font-semibold text-gray-100">Explanation</h4>
+        <div className="mt-3 space-y-2">
+          {explanation.length > 0 ? explanation.slice(0, 8).map((note, index) => (
+            <p key={`${note}-${index}`} className="text-xs leading-5 text-gray-400">{note}</p>
+          )) : <p className="text-xs text-gray-500">No GEX/CVD adjustment was applied.</p>}
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function StructureMetric({ label, value, helper }: { label: string; value: string; helper: string }) {
+  return (
+    <div className="min-w-0 border-l-2 border-gray-700 pl-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-500">{label}</p>
+      <p className="data-number mt-1 break-words text-sm font-semibold text-gray-100">{value}</p>
+      <p className="mt-1 line-clamp-3 text-[11px] leading-4 text-gray-500">{helper}</p>
+    </div>
+  );
+}
+
 function AdvancedConfluencePanel({ asset }: { asset: GroupedAsset }) {
   const confluence = asset.confluence;
   const optionsMessage =
@@ -2167,13 +2551,16 @@ function AdvancedConfluencePanel({ asset }: { asset: GroupedAsset }) {
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Advanced Confluence</p>
           <h3 className="mt-2 text-xl font-semibold">
-            Trend State: {asset.trendState?.replaceAll("_", " ") ?? confluence?.trendState?.replaceAll("_", " ") ?? "neutral"}
+            {asset.sessionProjection?.session ?? "Main session"} Projection: {displayBias(asset.sessionProjection?.bias ?? confluence?.finalBias ?? asset.bias)}
           </h3>
           <p className="mt-2 text-sm text-gray-400">
-            Edge Score: {formatScore(asset.edgeScore ?? confluence?.edgeScore)} | News vs Flow: {asset.newsFlowRelationship?.relationship?.replaceAll("_", " ") ?? "--"}
+            Trend condition: {asset.trendState?.replaceAll("_", " ") ?? confluence?.trendState?.replaceAll("_", " ") ?? "ranging"} | Edge Score: {formatScore(asset.edgeScore ?? confluence?.edgeScore)}
           </p>
         </div>
-        <BiasPill bias={confluence?.finalBias ?? asset.bias} />
+        <div className="flex flex-wrap items-center gap-2">
+          <BiasPill bias={confluence?.finalBias ?? asset.bias} />
+          <ReversalPill reversal={asset.reversal} />
+        </div>
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -2291,19 +2678,24 @@ function WhyBiasSection({
     return title.includes(asset?.asset.toLowerCase() ?? "") || title.includes("fed") || title.includes("inflation");
   });
   const scoreMeaning = asset?.hasBiasData ? explainScore(asset.score) : "bias unavailable";
+  const rawScoreText =
+    asset?.hasBiasData && typeof asset.rawBiasScore === "number"
+      ? ` Raw Bias Score: ${formatScore(asset.rawBiasScore)}.`
+      : "";
 
   return (
     <div className="mt-6 rounded-2xl border border-gray-800 bg-[#0d1423] p-5">
       <h3 className="text-lg font-semibold text-cyan-300">Why This Bias?</h3>
       <p className="mt-3 text-sm leading-7 text-gray-300">
-        Score is directional pressure: positive is bullish pressure, negative is bearish pressure,
-        and near zero is mixed or neutral. Current score: {asset?.hasBiasData ? formatScore(asset.score) : "N/A"} ({scoreMeaning}).
+        Final Score is confluence-adjusted directional pressure: positive is bullish pressure,
+        negative is bearish pressure, and near zero is mixed or neutral. Current final score:{" "}
+        {asset?.hasBiasData ? formatScore(asset.score) : "N/A"} ({scoreMeaning}).{rawScoreText}
       </p>
 
       <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-3">
         <BiasContributor
           label="News Bias"
-          value={asset?.hasBiasData ? asset?.newsBias?.bias ?? "Neutral" : "N/A"}
+          value={asset?.hasBiasData ? displayBias(asset?.newsBias?.bias) : "N/A"}
           helper={
             asset?.hasBiasData
               ? `Weighted headline matches: source reliability, category importance, and asset relevance. ${formatScore(asset?.newsBias?.confidence)}% confidence, score ${formatScore(asset?.newsBias?.score)}`
@@ -2312,7 +2704,7 @@ function WhyBiasSection({
         />
         <BiasContributor
           label="Technical Bias"
-          value={asset?.technicalBias?.bias ?? "Neutral"}
+          value={displayBias(asset?.technicalBias?.bias)}
           helper={
             asset?.hasBiasData
               ? `Live market context: asset momentum, ES/NQ, VIX, DXY, oil, US10Y, gold, and macro regime. ${formatScore(asset?.technicalBias?.confidence)}% confidence, score ${formatScore(asset?.technicalBias?.score)}`
@@ -2321,11 +2713,28 @@ function WhyBiasSection({
         />
         <BiasContributor
           label="Combined Bias"
-          value={asset?.hasBiasData ? asset?.combinedBias?.bias ?? asset?.bias ?? "Neutral" : "N/A"}
+          value={asset?.hasBiasData ? displayBias(asset?.combinedBias?.bias ?? asset?.bias) : "N/A"}
           helper={
             asset?.hasBiasData
-              ? "News score + technical score + cross-asset confluence. Event risk can reduce confidence and increase expected-move risk."
+              ? `Raw model before advanced confluence: news + technical + cross-asset context. Raw Bias Score ${formatScore(asset.rawBiasScore ?? asset.combinedBias?.score)}.`
               : "Combined bias unavailable until deterministic rules are configured for this symbol."
+          }
+        />
+        <BiasContributor
+          label="Expected Move Basis"
+          value={
+            asset?.hasBiasData
+              ? asset.expectedMoveBasis?.status === "OK"
+                ? `${asset.expectedMoveBasis.lookbackSessions ?? 14}-session ATR`
+                : "Unavailable"
+              : "N/A"
+          }
+          helper={
+            asset?.hasBiasData
+              ? asset.expectedMoveBasis?.status === "OK"
+                ? `Next ${asset.expectedMoveBasis.horizon ?? "trading session"} range from ${asset.expectedMoveBasis.source ?? "historical daily candles"}. ATR ${formatScore(asset.expectedMoveBasis.atr)} as of ${formatDateTime(asset.expectedMoveBasis.asOf)}. Event risk affects confidence, not this range.`
+                : asset.expectedMoveBasis?.unavailableReason ?? "ATR data is unavailable for this asset."
+              : "Expected move unavailable for quote-only watchlist symbols."
           }
         />
         <BiasContributor
@@ -2514,12 +2923,11 @@ function UpcomingNewsView({
   const headlines = [...(newsImpact?.items ?? [])].sort((a, b) => b.impactScore - a.impactScore);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div className="space-y-5">
+      <div className="page-command">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Upcoming News</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Economic Events & Market Headlines</h1>
-          <p className="mt-2 text-sm text-gray-400">
+          <h1>Upcoming News</h1>
+          <p>
             Calendar risk from ForexFactory/manual sources with market-moving headline context.
           </p>
         </div>
@@ -2527,8 +2935,10 @@ function UpcomingNewsView({
         <button
           type="button"
           onClick={onRefresh}
-          className="w-fit rounded-xl border border-gray-700 bg-[#111827] px-4 py-2 text-sm font-semibold text-gray-200 transition hover:border-cyan-500"
+          disabled={loading}
+          className="command-chip justify-center disabled:cursor-not-allowed disabled:opacity-60"
         >
+          <RefreshCw aria-hidden="true" size={15} className={loading ? "animate-spin" : ""} />
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
@@ -2561,6 +2971,7 @@ function UpcomingNewsView({
 
             <div className="flex flex-wrap gap-2">
               <select
+                aria-label="Filter calendar by currency"
                 value={currencyFilter}
                 onChange={(event) => onCurrencyFilterChange(event.target.value)}
                 className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm text-gray-200"
@@ -2573,6 +2984,7 @@ function UpcomingNewsView({
               </select>
 
               <select
+                aria-label="Filter calendar by impact"
                 value={impactFilter}
                 onChange={(event) => onImpactFilterChange(event.target.value)}
                 className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm text-gray-200"
@@ -2677,12 +3089,11 @@ function EvaluationsView({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+    <div className="space-y-5">
+      <div className="page-command">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Evaluations</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight">Bias Review & Post-Mortems</h1>
-          <p className="mt-2 text-sm text-gray-400">
+          <h1>Evaluations &amp; Post-Mortems</h1>
+          <p>
             Current evaluations compare each saved /api/bias run against the next saved run
             for the same asset. Logging is manual/API-triggered for now, so holding period
             depends on when bias runs are created.
@@ -2692,8 +3103,10 @@ function EvaluationsView({
         <button
           type="button"
           onClick={onRefresh}
-          className="w-fit rounded-xl border border-gray-700 bg-[#111827] px-4 py-2 text-sm font-semibold text-gray-200 transition hover:border-cyan-500"
+          disabled={loading}
+          className="command-chip justify-center disabled:cursor-not-allowed disabled:opacity-60"
         >
+          <RefreshCw aria-hidden="true" size={15} className={loading ? "animate-spin" : ""} />
           {loading ? "Refreshing..." : "Refresh"}
         </button>
       </div>
@@ -2723,6 +3136,7 @@ function EvaluationsView({
 
             <div className="flex flex-wrap gap-2">
               <select
+                aria-label="Filter evaluations by asset"
                 value={assetFilter}
                 onChange={(event) => onAssetFilterChange(event.target.value)}
                 className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm text-gray-200"
@@ -2736,6 +3150,7 @@ function EvaluationsView({
               </select>
 
               <select
+                aria-label="Filter evaluations by verdict"
                 value={verdictFilter}
                 onChange={(event) => onVerdictFilterChange(event.target.value)}
                 className="rounded-xl border border-gray-700 bg-[#0d1423] px-3 py-2 text-sm text-gray-200"
@@ -3039,7 +3454,15 @@ function SelectedEvaluationPanel({
 
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
         <MetricCard label="Direction" value={direction.label} helper="direction result only" />
-        <MetricCard label="Move Fit" value={moveFit.label} helper={formatPercentMetric(evaluation?.moveAccuracy)} />
+        <MetricCard
+          label="Move Fit"
+          value={moveFit.label}
+          helper={
+            evaluation?.moveFitAvailable === false
+              ? evaluation.moveFitReason ?? "Move-fit comparison is unavailable."
+              : formatPercentMetric(evaluation?.moveAccuracy)
+          }
+        />
         <MetricCard
           label="Expected Move"
           value={formatExpectedMove(row.bias, row.movePoints)}
@@ -3109,9 +3532,17 @@ function PostMortemPanel({ postMortem }: { postMortem: PostMortemResponse["postM
       </div>
 
       <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <MetricCard label="Predicted Move" value={formatExpectedMove(evaluation.predictedBias, evaluation.predictedMove)} helper={evaluation.predictedBias} />
+        <MetricCard label="Predicted Move" value={formatExpectedMove(evaluation.predictedBias, evaluation.predictedMove)} helper={displayBias(evaluation.predictedBias)} />
         <MetricCard label="Actual Move" value={formatSignedNumber(evaluation.actualMove)} helper={`${formatSignedNumber(evaluation.actualMovePercent)}%`} />
-        <MetricCard label="Move Fit" value={moveFit.label} helper={`${formatPercentMetric(evaluation.moveAccuracy)}, error ${formatCompactNumber(evaluation.moveError)}`} />
+        <MetricCard
+          label="Move Fit"
+          value={moveFit.label}
+          helper={
+            evaluation.moveFitAvailable === false
+              ? evaluation.moveFitReason ?? "Move-fit comparison is unavailable."
+              : `${formatPercentMetric(evaluation.moveAccuracy)}, error ${formatCompactNumber(evaluation.moveError)}`
+          }
+        />
         <MetricCard label="Holding Period" value={`${evaluation.holdingPeriodMinutes}m`} helper={`against saved run ${evaluation.evaluatedAgainstId}`} />
       </div>
 
@@ -3176,10 +3607,10 @@ function MetricCard({
   helper: string;
 }) {
   return (
-    <div className="rounded-2xl border border-gray-800 bg-[#111827] p-5">
-      <p className="text-xs uppercase tracking-[0.2em] text-gray-400">{label}</p>
-      <p className="mt-2 break-words text-2xl font-bold">{value}</p>
-      <p className="mt-2 text-sm text-gray-400">{helper}</p>
+    <div className="rounded-2xl border border-gray-800 bg-[#111827] p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-gray-500">{label}</p>
+      <p className="data-number mt-2 break-words text-xl font-semibold">{value}</p>
+      <p className="mt-1.5 text-xs leading-5 text-gray-400">{helper}</p>
     </div>
   );
 }
@@ -3195,7 +3626,7 @@ function BiasBreakdownCard({
     <div className="rounded-xl border border-gray-800 bg-[#0d1423] p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="font-semibold">{title}</h3>
-        <BiasPill bias={breakdown?.bias ?? "Neutral"} />
+        <BiasPill bias={displayBias(breakdown?.bias)} />
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
         <div>
@@ -3246,16 +3677,48 @@ function ImpactDot({ impact }: { impact: string }) {
 }
 
 function BiasPill({ bias }: { bias: string }) {
+  const displayValue = displayBias(bias);
   const className =
-    bias === "Bullish"
+    displayValue === "Bullish"
       ? "border-green-700 bg-green-900/20 text-green-300"
-      : bias === "Bearish"
+      : displayValue === "Bearish"
         ? "border-red-700 bg-red-900/20 text-red-300"
         : "border-yellow-700 bg-yellow-900/20 text-yellow-300";
 
   return (
     <span className={`rounded-lg border px-2.5 py-1 text-xs font-semibold ${className}`}>
-      {bias}
+      {displayValue}
+    </span>
+  );
+}
+
+function displayBias(bias?: string | null) {
+  if (!bias) return "Ranging";
+  if (bias.toLowerCase() === "neutral") return "Ranging";
+  return bias;
+}
+
+function ReversalPill({ reversal }: { reversal?: ReversalSignal | null }) {
+  const signal = reversal?.signal ?? "UNAVAILABLE";
+  const className =
+    signal === "BULLISH_REVERSAL"
+      ? "border-green-700 bg-green-900/20 text-green-300"
+      : signal === "BEARISH_REVERSAL"
+        ? "border-red-700 bg-red-900/20 text-red-300"
+        : signal === "TWO_SIDED_SWEEP"
+          ? "border-yellow-700 bg-yellow-900/20 text-yellow-300"
+          : signal === "UPSIDE_BREAKOUT"
+            ? "border-cyan-700 bg-cyan-900/20 text-cyan-300"
+            : signal === "DOWNSIDE_BREAKDOWN"
+              ? "border-orange-700 bg-orange-900/20 text-orange-300"
+              : "border-gray-700 bg-gray-800 text-gray-300";
+
+  return (
+    <span
+      className={`rounded-lg border px-2 py-1 text-[10px] font-semibold sm:text-xs ${className}`}
+      title={reversal?.reason ?? "Previous-session reversal data unavailable."}
+    >
+      {reversal?.label ?? "Reversal N/A"}
     </span>
   );
 }
@@ -3403,6 +3866,9 @@ function buildGroupedAssets(defaultAssets: AssetCard[], watchlistQuotes: Watchli
         snapshot: technicalSnapshot,
       },
       combinedBias: null,
+      gex: quote.gex ?? null,
+      cvd: quote.cvd ?? null,
+      confluenceBreakdown: null,
       regime: null,
       regimeConfidence: null,
       drivers: [],
@@ -3441,7 +3907,8 @@ function formatShortTime(value: string) {
   });
 }
 
-function formatCompactNumber(value: number) {
+function formatCompactNumber(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) return "--";
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
@@ -3453,7 +3920,7 @@ function formatHealthTime(value?: string) {
   });
 }
 
-function formatDateTime(value?: string) {
+function formatDateTime(value?: string | null) {
   if (!value) return "--";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "--";
@@ -3607,6 +4074,13 @@ function getDirectionResult(evaluation?: EvaluationDetail): ReviewToneResult {
 }
 
 function getMoveFit(evaluation?: EvaluationDetail): ReviewToneResult {
+  if (evaluation?.moveFitAvailable === false) {
+    return {
+      label: evaluation.expectedMoveAvailable ? "Not comparable" : "Unavailable",
+      tone: "neutral",
+    };
+  }
+
   const accuracy = evaluation?.moveAccuracy;
   if (typeof accuracy !== "number") return { label: "Pending", tone: "neutral" };
   if (accuracy >= 70) return { label: "Good", tone: "good" };
@@ -3628,8 +4102,10 @@ function getOverallReview(evaluation?: EvaluationDetail): ReviewToneResult {
 
 function explainScore(value?: number | null) {
   if (typeof value !== "number") return "no score loaded";
-  if (value > 1) return "bullish pressure";
-  if (value < -1) return "bearish pressure";
+  if (value > 12) return "strong bullish pressure";
+  if (value > 3) return "bullish pressure";
+  if (value < -12) return "strong bearish pressure";
+  if (value < -3) return "bearish pressure";
   return "neutral or mixed pressure";
 }
 

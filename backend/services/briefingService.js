@@ -1,7 +1,7 @@
 export function buildMacroBriefing({ market = {}, bias = {}, newsImpact = null }) {
 
   const briefing = {
-    macroTone: "NEUTRAL",
+    macroTone: "RANGING",
     summary: "",
     keyDrivers: [],
     riskFactors: [],
